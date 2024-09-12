@@ -18,6 +18,8 @@ const Header = struct {
 
 const FileDecoder = struct {
     header: Header,
+    fn decode(buffer: []u8, allocator: std.mem.Allocator) ![]u8 {}
+    fn encode(buffer: []u8, allocator: std.mem.Allocator) ![]u8 {}
 };
 
 pub fn main() !void {
