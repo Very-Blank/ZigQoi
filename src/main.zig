@@ -10,13 +10,13 @@ const Colorspace = enum {
     LALL, //all channels linear
 };
 
-const QOI_OP_RGB: u8 = 254;
-const QOI_OP_RGBA: u8 = 255;
+const QOI_OP_RGB: u8 = 0b11111110;
+const QOI_OP_RGBA: u8 = 0b11111111;
 
-const QOI_OP_INDEX: u2 = 0;
-const QOI_OP_DIFF: u2 = 1;
-const QOI_OP_LUMA: u2 = 2;
-const QOI_OP_RUN: u2 = 3;
+const QOI_OP_INDEX: u2 = 0b00;
+const QOI_OP_DIFF: u2 = 0b01;
+const QOI_OP_LUMA: u2 = 0b10;
+const QOI_OP_RUN: u2 = 0b11;
 
 const Header = struct {
     width: u32,
@@ -64,8 +64,9 @@ const FileDecoder = struct {
         self.allocator.free(self.imageBinData);
     }
 
-    fn decode(buffer: []u8, allocator: std.mem.Allocator) ![][4]u8 {
-        var runningArray: [][4]u8 = allocator.alloc([4]u8, 64);
+    fn decode(buffer: []u8, width: u32, height: u32, allocator: std.mem.Allocator) ![][4]u8 {
+        const imageData: [][4]u8 = allocator.alloc([4]u8, width * height);
+        const runningArray: [][4]u8 = allocator.alloc([4]u8, 64);
         var prevPixel: [4]u8 = .{ 0, 0, 0, 255 };
         var runLength: u6 = 0;
 
@@ -82,7 +83,9 @@ const FileDecoder = struct {
                         //
                     },
                     else => {
-                        switch (get2BitTag(bit)) {
+                        const bitFlag: u2 = @intCast(bit >> 6);
+                        const data: u6 = @intCast(bit & 0b00111111);
+                        switch (bitFlag) {
                             QOI_OP_INDEX => {
                                 //
                             },
@@ -93,25 +96,12 @@ const FileDecoder = struct {
                                 //
                             },
                             QOI_OP_RUN => {
-                                //
+                                runLength = data;
                             },
                         }
                     },
                 }
             }
-        }
-    }
-
-    fn get2BitTag(byte: u8) u2 {
-        if (byte < 64) {
-            return 0;
-        } else if (63 < byte and byte < 128) {
-            return 1;
-        }
-        if (127 < byte and byte < 255) {
-            return 2;
-        } else {
-            return 3;
         }
     }
 
