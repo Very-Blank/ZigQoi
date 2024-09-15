@@ -90,7 +90,6 @@ const FileDecoder = struct {
 
         while (i < buffer.len) {
             if (runLength > 0) {
-                //Add code here for run length encoding
                 runLength -= 1;
                 imageData[currentPixel] = prevPixel;
                 i += 1;
@@ -134,21 +133,23 @@ const FileDecoder = struct {
                                 i += 1;
                             },
                             QOI_OP_DIFF => {
-                                const r: u2 = @intCast(data & 0b000011);
-                                const g: u2 = @intCast((data & 0b001100) >> 2);
-                                const b: u2 = @intCast(data >> 4);
+                                const rDiff: u2 = @intCast(data & 0b000011);
+                                const gDiff: u2 = @intCast((data & 0b001100) >> 2);
+                                const bDiff: u2 = @intCast(data >> 4);
 
-                                prevPixel[0] +%= r - 2;
-                                prevPixel[1] +%= g - 2;
-                                prevPixel[2] +%= b - 2;
+                                prevPixel[0] +%= rDiff - 2;
+                                prevPixel[1] +%= gDiff - 2;
+                                prevPixel[2] +%= bDiff - 2;
 
                                 imageData[currentPixel] = prevPixel;
                                 i += 1;
                             },
                             QOI_OP_LUMA => {
-                                //
-                                //
-                                //
+                                const rDiff: u8 = (buffer[i + 1] & 0b00001111) + data;
+                                const bDiff: u8 = (buffer[i + 1] >> 4) + data;
+                                prevPixel[0] +%= rDiff - 8;
+                                prevPixel[1] +%= data - 32;
+                                prevPixel[2] +%= bDiff - 8;
                                 prevPixel = imageData[currentPixel];
                                 i += 2;
                             },
