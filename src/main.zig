@@ -67,46 +67,108 @@ const FileDecoder = struct {
     fn decode(buffer: []u8, width: u32, height: u32, allocator: std.mem.Allocator) ![][4]u8 {
         const imageData: [][4]u8 = allocator.alloc([4]u8, width * height);
         const runningArray: [][4]u8 = allocator.alloc([4]u8, 64);
-        var prevPixel: [4]u8 = .{ 0, 0, 0, 255 };
-        var runLength: u6 = 0;
 
-        for (buffer) |bit| {
+        for (0..runningArray.len) |i| {
+            runningArray[i] = .{
+                0,
+                0,
+                0,
+                0,
+            };
+        }
+
+        var currentPixel: u64 = 0;
+        var prevPixel: [4]u8 = .{
+            0,
+            0,
+            0,
+            255,
+        };
+
+        var runLength: u6 = 0;
+        var i: u64 = 0;
+
+        while (i < buffer.len) {
             if (runLength > 0) {
                 //Add code here for run length encoding
                 runLength -= 1;
+                imageData[currentPixel] = prevPixel;
+                i += 1;
             } else {
-                switch (bit) {
+                switch (buffer[i]) {
                     QOI_OP_RGB => {
-                        //
+                        imageData[currentPixel] = .{
+                            buffer[i + 1],
+                            buffer[i + 2],
+                            buffer[i + 3],
+                            prevPixel[3],
+                        };
+
+                        prevPixel = imageData[currentPixel];
+                        i += 4;
                     },
                     QOI_OP_RGBA => {
-                        //
+                        imageData[currentPixel] = .{
+                            buffer[i + 1],
+                            buffer[i + 2],
+                            buffer[i + 3],
+                            buffer[i + 4],
+                        };
+
+                        prevPixel = imageData[currentPixel];
+                        i += 5;
                     },
                     else => {
-                        const bitFlag: u2 = @intCast(bit >> 6);
-                        const data: u6 = @intCast(bit & 0b00111111);
+                        const bitFlag: u2 = @intCast(buffer[i] >> 6);
+                        const data: u6 = @intCast(buffer[i] & 0b00111111);
                         switch (bitFlag) {
                             QOI_OP_INDEX => {
-                                //
+                                imageData[currentPixel] = .{
+                                    runningArray[data][0],
+                                    runningArray[data][1],
+                                    runningArray[data][2],
+                                    runningArray[data][3],
+                                };
+
+                                prevPixel = imageData[currentPixel];
+                                i += 1;
                             },
                             QOI_OP_DIFF => {
-                                //
+                                const r: u2 = @intCast(data & 0b000011);
+                                const g: u2 = @intCast((data & 0b001100) >> 2);
+                                const b: u2 = @intCast(data >> 4);
+
+                                prevPixel[0] +%= r - 2;
+                                prevPixel[1] +%= g - 2;
+                                prevPixel[2] +%= b - 2;
+
+                                imageData[currentPixel] = prevPixel;
+                                i += 1;
                             },
                             QOI_OP_LUMA => {
                                 //
+                                //
+                                //
+                                prevPixel = imageData[currentPixel];
+                                i += 2;
                             },
                             QOI_OP_RUN => {
                                 runLength = data;
+                                i += 1;
                             },
                         }
                     },
                 }
+
+                runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
             }
+
+            currentPixel += 1;
         }
     }
 
-    fn getIndex(r: u8, g: u8, b: u8, a: u8) u8 {
-        return (r * 3 + g * 5 + b * 7 + a * 11) % 64;
+    fn getIndex(color: [4]u8) u8 {
+        return (color[0] * 3 + color[1] * 5 + color[2] * 7 + color[3] * 11) % 64;
     }
 };
 
