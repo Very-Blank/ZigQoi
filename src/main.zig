@@ -30,7 +30,7 @@ pub const FileDecoder = struct {
     imageBinData: [][4]u8,
     allocator: std.mem.Allocator,
 
-    pub fn init(filePath: []u8, allocator: std.mem.Allocator) !FileDecoder {
+    pub fn init(filePath: []const u8, allocator: std.mem.Allocator) !FileDecoder {
         const file = try std.fs.cwd().openFile(filePath, .{});
 
         const buffer = try allocator.alloc(u8, try file.getEndPos());
@@ -51,31 +51,18 @@ pub const FileDecoder = struct {
             .allocator = allocator,
         };
 
-        if (fileDecoder.header.channels != (4 or 3)) {
-            return error.QoiIncorrectChannels;
-        }
-
-        fileDecoder.imageBinData = try decode(buffer, allocator);
+        fileDecoder.imageBinData = try decode(buffer, fileDecoder.header.width, fileDecoder.header.height, allocator);
 
         return fileDecoder;
     }
 
-    pub fn deInit(self: *FileDecoder) void {
+    pub fn deInit(self: *const FileDecoder) void {
         self.allocator.free(self.imageBinData);
     }
 
     fn decode(buffer: []u8, width: u32, height: u32, allocator: std.mem.Allocator) ![][4]u8 {
-        const imageData: [][4]u8 = allocator.alloc([4]u8, width * height);
-        const runningArray: [][4]u8 = allocator.alloc([4]u8, 64);
-
-        for (0..runningArray.len) |i| {
-            runningArray[i] = .{
-                0,
-                0,
-                0,
-                0,
-            };
-        }
+        const imageData: [][4]u8 = try allocator.alloc([4]u8, width * height);
+        const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
 
         var currentPixel: u64 = 0;
         var prevPixel: [4]u8 = .{
@@ -92,7 +79,8 @@ pub const FileDecoder = struct {
             if (runLength > 0) {
                 runLength -= 1;
                 imageData[currentPixel] = prevPixel;
-                i += 1;
+
+                currentPixel += 1;
             } else {
                 switch (buffer[i]) {
                     QOI_OP_RGB => {
@@ -102,8 +90,10 @@ pub const FileDecoder = struct {
                             buffer[i + 3],
                             prevPixel[3],
                         };
-
                         prevPixel = imageData[currentPixel];
+                        runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
+
+                        currentPixel += 1;
                         i += 4;
                     },
                     QOI_OP_RGBA => {
@@ -115,6 +105,9 @@ pub const FileDecoder = struct {
                         };
 
                         prevPixel = imageData[currentPixel];
+                        runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
+
+                        currentPixel += 1;
                         i += 5;
                     },
                     else => {
@@ -130,28 +123,86 @@ pub const FileDecoder = struct {
                                 };
 
                                 prevPixel = imageData[currentPixel];
+
+                                currentPixel += 1;
                                 i += 1;
                             },
                             QOI_OP_DIFF => {
-                                const rDiff: u2 = @intCast(data & 0b000011);
+                                const rDiff: u2 = @intCast(data >> 4);
                                 const gDiff: u2 = @intCast((data & 0b001100) >> 2);
-                                const bDiff: u2 = @intCast(data >> 4);
+                                const bDiff: u2 = @intCast(data & 0b000011);
 
-                                prevPixel[0] +%= rDiff - 2;
-                                prevPixel[1] +%= gDiff - 2;
-                                prevPixel[2] +%= bDiff - 2;
+                                if (rDiff < 3) {
+                                    prevPixel[0] -%= 2 - 1 * rDiff;
+                                } else {
+                                    prevPixel[0] +%= 1;
+                                }
+
+                                if (gDiff < 3) {
+                                    prevPixel[1] -%= 2 - 1 * gDiff;
+                                } else {
+                                    prevPixel[1] +%= 1;
+                                }
+
+                                if (bDiff < 3) {
+                                    prevPixel[2] -%= 2 - 1 * bDiff;
+                                } else {
+                                    prevPixel[2] +%= 1;
+                                }
 
                                 imageData[currentPixel] = prevPixel;
+                                runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
+
+                                currentPixel += 1;
                                 i += 1;
                             },
                             QOI_OP_LUMA => {
-                                const rDiff: u8 = (buffer[i + 1] & 0b00001111) + data;
-                                const bDiff: u8 = (buffer[i + 1] >> 4) + data;
-                                prevPixel[0] +%= rDiff - 8;
-                                prevPixel[1] +%= data - 32;
-                                prevPixel[2] +%= bDiff - 8;
-                                prevPixel = imageData[currentPixel];
+                                const rDiff: u8 = (buffer[i + 1] & 0b00001111);
+                                const bDiff: u8 = (buffer[i + 1] >> 4);
+
+                                if (rDiff <= 8) {
+                                    prevPixel[0] -%= 8 - 1 * rDiff;
+                                    if (data <= 32) {
+                                        prevPixel[0] -%= 32 - 1 * data;
+                                    } else {
+                                        prevPixel[0] +%= data - 32;
+                                    }
+                                } else {
+                                    prevPixel[0] +%= rDiff - 8;
+                                    if (data <= 32) {
+                                        prevPixel[0] -%= 32 - 1 * data;
+                                    } else {
+                                        prevPixel[0] +%= data - 32;
+                                    }
+                                }
+
+                                if (data <= 32) {
+                                    prevPixel[1] -%= 32 - 1 * data;
+                                } else {
+                                    prevPixel[1] +%= data - 32;
+                                }
+
+                                if (bDiff <= 8) {
+                                    prevPixel[2] -%= 8 - 1 * bDiff;
+                                    if (data <= 32) {
+                                        prevPixel[2] -%= 32 - 1 * data;
+                                    } else {
+                                        prevPixel[2] +%= data - 32;
+                                    }
+                                } else {
+                                    prevPixel[2] +%= bDiff - 8;
+                                    if (data <= 32) {
+                                        prevPixel[2] -%= 32 - 1 * data;
+                                    } else {
+                                        prevPixel[2] +%= data - 32;
+                                    }
+                                }
+
+                                imageData[currentPixel] = prevPixel;
+                                runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
+
                                 i += 2;
+                                currentPixel += 1;
                             },
                             QOI_OP_RUN => {
                                 runLength = data;
@@ -160,16 +211,18 @@ pub const FileDecoder = struct {
                         }
                     },
                 }
-
-                runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
             }
-
-            currentPixel += 1;
         }
+
+        return imageData;
     }
 
     fn getIndex(color: [4]u8) u8 {
-        return (color[0] * 3 + color[1] * 5 + color[2] * 7 + color[3] * 11) % 64;
+        const r: u32 = color[0];
+        const g: u32 = color[1];
+        const b: u32 = color[2];
+        const a: u32 = color[3];
+        return @intCast((r * 3 + g * 5 + b * 7 + a * 11) % 64);
     }
 };
 
