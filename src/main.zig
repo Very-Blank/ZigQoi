@@ -18,14 +18,14 @@ const QOI_OP_DIFF: u2 = 0b01;
 const QOI_OP_LUMA: u2 = 0b10;
 const QOI_OP_RUN: u2 = 0b11;
 
-const Header = struct {
+pub const Header = struct {
     width: u32,
     height: u32,
     channels: Channels,
     colorspace: Colorspace,
 };
 
-const FileDecoder = struct {
+pub const FileDecoder = struct {
     header: Header,
     imageBinData: [][4]u8,
     allocator: std.mem.Allocator,
