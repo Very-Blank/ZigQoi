@@ -51,7 +51,7 @@ pub const FileDecoder = struct {
             .allocator = allocator,
         };
 
-        fileDecoder.imageBinData = try decode(buffer[14..buffer.len], fileDecoder.header.width, fileDecoder.header.height, allocator);
+        fileDecoder.imageBinData = try decode(buffer[14 .. buffer.len - 8], fileDecoder.header.width, fileDecoder.header.height, allocator);
 
         return fileDecoder;
     }
@@ -77,10 +77,10 @@ pub const FileDecoder = struct {
 
         while (i < buffer.len) {
             if (runLength > 0) {
-                runLength -= 1;
                 imageData[currentPixel] = prevPixel;
 
                 currentPixel += 1;
+                runLength -= 1;
             } else {
                 switch (buffer[i]) {
                     QOI_OP_RGB => {
@@ -159,7 +159,6 @@ pub const FileDecoder = struct {
                             QOI_OP_LUMA => {
                                 const rDiff: u8 = (buffer[i + 1] >> 4);
                                 const bDiff: u8 = (buffer[i + 1] & 0b00001111);
-                                //1111 0000 & 0000 1111 = 0000 0000 tai 0000 1010 & 0000 1111 = 0000 1010
 
                                 if (rDiff <= 8) {
                                     prevPixel[0] -%= 8 - 1 * rDiff;
@@ -202,11 +201,11 @@ pub const FileDecoder = struct {
                                 imageData[currentPixel] = prevPixel;
                                 runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
 
-                                i += 2;
                                 currentPixel += 1;
+                                i += 2;
                             },
                             QOI_OP_RUN => {
-                                runLength = data;
+                                runLength = data + 1;
                                 i += 1;
                             },
                         }
@@ -214,6 +213,8 @@ pub const FileDecoder = struct {
                 }
             }
         }
+
+        std.debug.print("{any}\n", .{currentPixel});
 
         return imageData;
     }
