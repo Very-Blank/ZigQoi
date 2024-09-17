@@ -51,7 +51,7 @@ pub const FileDecoder = struct {
             .allocator = allocator,
         };
 
-        fileDecoder.imageBinData = try decode(buffer, fileDecoder.header.width, fileDecoder.header.height, allocator);
+        fileDecoder.imageBinData = try decode(buffer[14..buffer.len], fileDecoder.header.width, fileDecoder.header.height, allocator);
 
         return fileDecoder;
     }
