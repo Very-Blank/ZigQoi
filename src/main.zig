@@ -157,8 +157,9 @@ pub const FileDecoder = struct {
                                 i += 1;
                             },
                             QOI_OP_LUMA => {
-                                const rDiff: u8 = (buffer[i + 1] & 0b00001111);
-                                const bDiff: u8 = (buffer[i + 1] >> 4);
+                                const rDiff: u8 = (buffer[i + 1] >> 4);
+                                const bDiff: u8 = (buffer[i + 1] & 0b00001111);
+                                //1111 0000 & 0000 1111 = 0000 0000 tai 0000 1010 & 0000 1111 = 0000 1010
 
                                 if (rDiff <= 8) {
                                     prevPixel[0] -%= 8 - 1 * rDiff;
