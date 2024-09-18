@@ -63,6 +63,14 @@ pub const FileDecoder = struct {
     fn decode(buffer: []u8, width: u32, height: u32, allocator: std.mem.Allocator) ![][4]u8 {
         const imageData: [][4]u8 = try allocator.alloc([4]u8, width * height);
         const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
+        for (0..runningArray.len) |i| {
+            runningArray[i] = .{
+                0,
+                0,
+                0,
+                255,
+            };
+        }
 
         var currentPixel: u64 = 0;
         var prevPixel: [4]u8 = .{
@@ -214,7 +222,12 @@ pub const FileDecoder = struct {
             }
         }
 
-        std.debug.print("{any}\n", .{currentPixel});
+        //Using up the remaining run length
+        while (runLength > 0) {
+            imageData[currentPixel] = prevPixel;
+            currentPixel += 1;
+            runLength -= 1;
+        }
 
         return imageData;
     }
