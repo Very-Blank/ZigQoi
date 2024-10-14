@@ -241,13 +241,6 @@ pub const FileDecoder = struct {
     }
 };
 
-const FileEncoder = struct {};
-
-pub fn main() !void {
-    // const allocator = std.heap.page_allocator
-
-    // std.debug.print("{any}\n", .{fileDecoder});
-
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-}
+const FileEncoder = struct {
+    pub fn decode(binData: []u8, datasChannels: Channels, allocator: std.mem.Allocator) []u8 {}
+};
