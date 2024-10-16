@@ -18,6 +18,23 @@ const QOI_OP_DIFF: u2 = 0b01;
 const QOI_OP_LUMA: u2 = 0b10;
 const QOI_OP_RUN: u2 = 0b11;
 
+const QOI_END_MARKER: [8]u8 = [_]u8{0} ** 8;
+
+pub const qoi_header = struct {
+    magic: u8[4], // magic bytes "qoif"
+    width: u32, // image width in pixels (BE)
+    height: u32, // image height in pixels (BE)
+    channels: u8, // 3 = RGB, 4 = RGBA
+    colorspace: u8, // 0 = sRGB with linear alpha // 1 = all channels linear
+};
+
+// (1 + 3) = tag + rgb
+const QOI_OP_RGB_SIZE: u8 = 1 + 3;
+// (1 + 4) = tag + rgba
+const QOI_OP_RGBA_SIZE: u8 = 1 + 4;
+const QOI_HEADER_SIZE = @sizeOf(qoi_header);
+const QOI_END_MARKER_SIZE = @sizeOf(QOI_END_MARKER);
+
 pub const Header = struct {
     width: u32,
     height: u32,
@@ -51,7 +68,7 @@ pub const FileDecoder = struct {
             .allocator = allocator,
         };
 
-        fileDecoder.imageBinData = try decode(buffer[14 .. buffer.len - 8], fileDecoder.header.width, fileDecoder.header.height, allocator);
+        fileDecoder.imageBinData = try decode(buffer[QOI_HEADER_SIZE .. buffer.len - QOI_END_MARKER], fileDecoder.header.width, fileDecoder.header.height, allocator);
 
         return fileDecoder;
     }
@@ -231,16 +248,43 @@ pub const FileDecoder = struct {
 
         return imageData;
     }
-
-    fn getIndex(color: [4]u8) u8 {
-        const r: u32 = color[0];
-        const g: u32 = color[1];
-        const b: u32 = color[2];
-        const a: u32 = color[3];
-        return @intCast((r * 3 + g * 5 + b * 7 + a * 11) % 64);
-    }
 };
 
 const FileEncoder = struct {
-    pub fn decode(binData: []u8, datasChannels: Channels, allocator: std.mem.Allocator) []u8 {}
+    pub fn encode(imageData: []u8, width: u32, height: u32, datasChannels: Channels, allocator: std.mem.Allocator) []u8 {
+        //worst case
+        const encodeData: []u8 = switch (datasChannels) {
+            .RGB => try allocator.alloc([]u8, width * height * QOI_OP_RGB_SIZE + QOI_HEADER_SIZE + QOI_END_MARKER),
+            .RGBA => try allocator.alloc([]u8, width * height * QOI_OP_RGBA_SIZE + QOI_HEADER_SIZE + QOI_END_MARKER),
+        };
+
+        const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
+        for (0..runningArray.len) |i| {
+            runningArray[i] = .{
+                0,
+                0,
+                0,
+                255,
+            };
+        }
+
+        var currentPixel: u64 = 0;
+        var prevPixel: [4]u8 = .{
+            0,
+            0,
+            0,
+            255,
+        };
+
+        var runLength: u6 = 0;
+        var i: u64 = 0;
+    }
 };
+
+fn getIndex(color: [4]u8) u8 {
+    const r: u32 = color[0];
+    const g: u32 = color[1];
+    const b: u32 = color[2];
+    const a: u32 = color[3];
+    return @intCast((r * 3 + g * 5 + b * 7 + a * 11) % 64);
+}
