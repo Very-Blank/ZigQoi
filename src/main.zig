@@ -6,8 +6,8 @@ pub const Channels = enum {
 };
 
 const Colorspace = enum {
-    SRGBLA, //sRGB with linear alpha
-    LALL, //all channels linear
+    sRGB, //sRGB with linear alpha
+    LINEAR, //all channels linear
 };
 
 const QOI_OP_RGB: u8 = 0b11111110;
@@ -62,7 +62,7 @@ pub const FileDecoder = struct {
                 .width = @byteSwap(std.mem.bytesToValue(u32, buffer[4..8])),
                 .height = @byteSwap(std.mem.bytesToValue(u32, buffer[8..12])),
                 .channels = if (buffer[12] == 3) Channels.RGB else if (buffer[12] == 4) Channels.RGBA else return error.InvalidQoiChannel,
-                .colorspace = if (buffer[13] == 0) Colorspace.SRGBLA else if (buffer[13] == 1) Colorspace.LALL else return error.InvalidQoiColorspace,
+                .colorspace = if (buffer[13] == 0) Colorspace.sRGB else if (buffer[13] == 1) Colorspace.LINEAR else return error.InvalidQoiColorspace,
             },
             .imageBinData = undefined,
             .allocator = allocator,
@@ -251,11 +251,26 @@ pub const FileDecoder = struct {
 };
 
 const FileEncoder = struct {
-    pub fn encode(imageData: []u8, width: u32, height: u32, datasChannels: Channels, allocator: std.mem.Allocator) []u8 {
+    pub fn encode(imageData: []u8, width: u32, height: u32, datasChannels: Channels, colorspace: Colorspace, allocator: std.mem.Allocator) []u8 {
         //worst case
-        const encodeData: []u8 = switch (datasChannels) {
+        var encodeData: []u8 = switch (datasChannels) {
             .RGB => try allocator.alloc([]u8, width * height * QOI_OP_RGB_SIZE + QOI_HEADER_SIZE + QOI_END_MARKER),
             .RGBA => try allocator.alloc([]u8, width * height * QOI_OP_RGBA_SIZE + QOI_HEADER_SIZE + QOI_END_MARKER),
+        };
+
+        //QOI HEARDER
+        const header: qoi_header = qoi_header{
+            .magic = "qoif",
+            .width = @byteSwap(width),
+            .height = @byteSwap(height),
+            .channels = switch (datasChannels) {
+                .RGB => 3,
+                .RGBA => 4,
+            },
+            .colorspace = switch (colorspace) {
+                .sRGB => 0,
+                .LINEAR => 1,
+            },
         };
 
         const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
@@ -278,6 +293,17 @@ const FileEncoder = struct {
 
         var runLength: u6 = 0;
         var i: u64 = 0;
+
+        switch (datasChannels) {
+            .RGB => {
+                //
+            },
+            .RGBA => {
+                //
+            },
+        }
+
+        return encodeData;
     }
 };
 
