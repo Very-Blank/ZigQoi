@@ -10,9 +10,18 @@ const Colorspace = enum {
     LINEAR, //all channels linear
 };
 
+const QOI_OP_INSTRUCTIONS = enum {
+    QOI_OP_RGB,
+    QOI_OP_RGBA,
+    QOI_OP_INDEX,
+    QOI_OP_DIFF,
+    QOI_OP_LUMA,
+    QOI_OP_RUN,
+};
+
+// flags
 const QOI_OP_RGB: u8 = 0b11111110;
 const QOI_OP_RGBA: u8 = 0b11111111;
-
 const QOI_OP_INDEX: u2 = 0b00;
 const QOI_OP_DIFF: u2 = 0b01;
 const QOI_OP_LUMA: u2 = 0b10;
@@ -259,7 +268,7 @@ const FileEncoder = struct {
         };
 
         //QOI HEARDER
-        const header: qoi_header = qoi_header{
+        const header: [14]u8 = std.mem.toBytes(qoi_header{
             .magic = "qoif",
             .width = @byteSwap(width),
             .height = @byteSwap(height),
@@ -271,7 +280,11 @@ const FileEncoder = struct {
                 .sRGB => 0,
                 .LINEAR => 1,
             },
-        };
+        });
+
+        for (0..header.len) |i| {
+            encodeData[i] = header[i];
+        }
 
         const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
         for (0..runningArray.len) |i| {
@@ -290,16 +303,25 @@ const FileEncoder = struct {
             0,
             255,
         };
-
         var runLength: u6 = 0;
         var i: u64 = 0;
 
         switch (datasChannels) {
             .RGB => {
-                //
+                var lastInstruction: QOI_OP_INSTRUCTIONS = QOI_OP_INSTRUCTIONS.QOI_OP_RGB;
+                while (i < imageData.len) : (i += 3) {
+                    //QOI_OP_RUN
+                    if (lastInstruction) {}
+                    //QOI_OP_DIFF
+                    //
+                    //QOI_OP_LUMA
+                    //
+                    //QOI_OP_RGB
+                }
             },
             .RGBA => {
-                //
+                var lastInstruction: QOI_OP_INSTRUCTIONS = QOI_OP_INSTRUCTIONS.QOI_OP_RGBA;
+                while (i < imageData.len) : (i += 4) {}
             },
         }
 
