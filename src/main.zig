@@ -22,10 +22,10 @@ const QOI_OP_INSTRUCTIONS = enum {
 // flags
 const QOI_OP_RGB: u8 = 0b11111110;
 const QOI_OP_RGBA: u8 = 0b11111111;
-const QOI_OP_INDEX: u2 = 0b00;
-const QOI_OP_DIFF: u2 = 0b01;
-const QOI_OP_LUMA: u2 = 0b10;
-const QOI_OP_RUN: u2 = 0b11;
+const QOI_OP_INDEX: u8 = 0b00000000;
+const QOI_OP_DIFF: u8 = 0b01000000;
+const QOI_OP_LUMA: u8 = 0b10000000;
+const QOI_OP_RUN: u8 = 0b11000000;
 
 const QOI_END_MARKER: [8]u8 = [_]u8{0} ** 8;
 
@@ -106,7 +106,7 @@ pub const FileDecoder = struct {
             255,
         };
 
-        var runLength: u6 = 0;
+        var runLength: u8 = 0;
         var i: u64 = 0;
 
         while (i < buffer.len) {
@@ -145,8 +145,8 @@ pub const FileDecoder = struct {
                         i += 5;
                     },
                     else => {
-                        const bitFlag: u2 = @intCast(buffer[i] >> 6);
-                        const data: u6 = @intCast(buffer[i] & 0b00111111);
+                        const bitFlag: u8 = buffer[i] >> 6;
+                        const data: u8 = buffer[i] & 0b00111111;
                         switch (bitFlag) {
                             QOI_OP_INDEX => {
                                 imageData[currentPixel] = .{
@@ -162,9 +162,9 @@ pub const FileDecoder = struct {
                                 i += 1;
                             },
                             QOI_OP_DIFF => {
-                                const rDiff: u2 = @intCast(data >> 4);
-                                const gDiff: u2 = @intCast((data & 0b001100) >> 2);
-                                const bDiff: u2 = @intCast(data & 0b000011);
+                                const rDiff: u8 = data >> 4;
+                                const gDiff: u8 = (data & 0b001100) >> 2;
+                                const bDiff: u8 = data & 0b000011;
 
                                 if (rDiff < 3) {
                                     prevPixel[0] -%= 2 - 1 * rDiff;
@@ -286,41 +286,85 @@ const FileEncoder = struct {
             encodeData[i] = header[i];
         }
 
-        const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
-        for (0..runningArray.len) |i| {
-            runningArray[i] = .{
-                0,
-                0,
-                0,
-                255,
-            };
-        }
-
-        var currentPixel: u64 = 0;
-        var prevPixel: [4]u8 = .{
-            0,
-            0,
-            0,
-            255,
-        };
-        var runLength: u6 = 0;
-        var i: u64 = 0;
+        var runLength: u8 = 0;
 
         switch (datasChannels) {
             .RGB => {
                 var lastInstruction: QOI_OP_INSTRUCTIONS = QOI_OP_INSTRUCTIONS.QOI_OP_RGB;
+                const runningArray: [][3]u8 = try allocator.alloc([3]u8, 64);
+                for (0..runningArray.len) |i| {
+                    runningArray[i] = .{
+                        0,
+                        0,
+                        0,
+                    };
+                }
+
+                var prevPixel: [3]u8 = .{
+                    0,
+                    0,
+                    0,
+                };
+
+                var currentEncodedByte: u64 = 0;
+                var i: u64 = 0;
                 while (i < imageData.len) : (i += 3) {
-                    //QOI_OP_RUN
-                    if (lastInstruction) {}
-                    //QOI_OP_DIFF
-                    //
-                    //QOI_OP_LUMA
-                    //
-                    //QOI_OP_RGB
+                    if (prevPixel[0] == imageData[i] and
+                        prevPixel[1] == imageData[i + 1] and
+                        prevPixel[2] == imageData[i + 2])
+                    {
+                        if (runLength == 62) {
+                            encodeData[currentEncodedByte] = runLength | QOI_OP_RUN;
+                            currentEncodedByte += 1;
+                            runLength = 0;
+                        } else {
+                            runLength += 1;
+                        }
+                    } else {
+                        if (lastInstruction == QOI_OP_INSTRUCTIONS.QOI_OP_RUN) {
+                            encodeData[i] = runLength | QOI_OP_RUN;
+                            currentEncodedByte += 1;
+                            runLength = 0;
+                        }
+                        //QOI_OP_INDEX
+                        const pixel: []u8 = .{ imageData[i], imageData[i + 1], imageData[i + 2], 255 };
+                        const currentRunningArray = runningArray[getIndex(pixel)];
+                        if (currentRunningArray[0] == imageData[i] and
+                            currentRunningArray[1] == imageData[i + 1] and
+                            currentRunningArray[2] == imageData[i + 2])
+                        {
+                            encodeData[currentEncodedByte] = getIndex(pixel) | QOI_OP_INDEX;
+                            currentEncodedByte += 1;
+                        }
+                        //QOI_OP_DIFF
+                        //
+                        //QOI_OP_LUMA
+                        //
+                        //QOI_OP_RGB
+
+                        prevPixel = imageData[i..3];
+                    }
                 }
             },
             .RGBA => {
+                const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
+                for (0..runningArray.len) |i| {
+                    runningArray[i] = .{
+                        0,
+                        0,
+                        0,
+                        255,
+                    };
+                }
+
+                var prevPixel: [4]u8 = .{
+                    0,
+                    0,
+                    0,
+                    255,
+                };
                 var lastInstruction: QOI_OP_INSTRUCTIONS = QOI_OP_INSTRUCTIONS.QOI_OP_RGBA;
+                var i: u64 = 0;
                 while (i < imageData.len) : (i += 4) {}
             },
         }
