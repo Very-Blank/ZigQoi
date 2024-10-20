@@ -327,22 +327,41 @@ const FileEncoder = struct {
                             runLength = 0;
                         }
                         //QOI_OP_INDEX
-                        const pixel: []u8 = .{ imageData[i], imageData[i + 1], imageData[i + 2], 255 };
-                        const currentRunningArray = runningArray[getIndex(pixel)];
-                        if (currentRunningArray[0] == imageData[i] and
-                            currentRunningArray[1] == imageData[i + 1] and
-                            currentRunningArray[2] == imageData[i + 2])
                         {
-                            encodeData[currentEncodedByte] = getIndex(pixel) | QOI_OP_INDEX;
-                            currentEncodedByte += 1;
+                            const pixel: []u8 = .{ imageData[i], imageData[i + 1], imageData[i + 2], 255 };
+                            const currentRunningArray = runningArray[getIndex(pixel)];
+                            if (currentRunningArray[0] == imageData[i] and
+                                currentRunningArray[1] == imageData[i + 1] and
+                                currentRunningArray[2] == imageData[i + 2])
+                            {
+                                encodeData[currentEncodedByte] = getIndex(pixel) | QOI_OP_INDEX;
+                                currentEncodedByte += 1;
+                                lastInstruction = QOI_OP_INSTRUCTIONS.QOI_OP_INDEX;
+                                continue;
+                            }
                         }
                         //QOI_OP_DIFF
-                        //
+                        const rDifference: i16 = @as(i16, @intCast(imageData[i])) - @as(i16, @intCast(prevPixel[0]));
+                        const gDifference: i16 = @as(i16, @intCast(imageData[i + 1])) - @as(i16, @intCast(prevPixel[1]));
+                        const bDifference: i16 = @as(i16, @intCast(imageData[i + 2])) - @as(i16, @intCast(prevPixel[2]));
+
+                        const rDiff: u8 = 4;
+                        const gDiff: u8 = 4;
+                        const bDiff: u8 = 4;
+
+                        if (-2 <= rDifference and rDifference <= 1) {
+                            rDiff = @intCast(rDifference + 2);
+                        } else if (rDiff == -255) {
+                            rDiff = 3;
+                        } else if (254 <= rDiff and rDiff <= 255) {
+                            rDiff = @intCast(rDifference - 254);
+                        }
+
                         //QOI_OP_LUMA
                         //
                         //QOI_OP_RGB
-
-                        prevPixel = imageData[i..3];
+                        runningArray[getIndex(pixel)] = imageData[i .. i + 3];
+                        prevPixel = imageData[i .. i + 3];
                     }
                 }
             },
@@ -363,6 +382,7 @@ const FileEncoder = struct {
                     0,
                     255,
                 };
+
                 var lastInstruction: QOI_OP_INSTRUCTIONS = QOI_OP_INSTRUCTIONS.QOI_OP_RGBA;
                 var i: u64 = 0;
                 while (i < imageData.len) : (i += 4) {}
