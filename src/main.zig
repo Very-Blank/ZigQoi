@@ -145,7 +145,7 @@ pub const FileDecoder = struct {
                         i += 5;
                     },
                     else => {
-                        const bitFlag: u8 = buffer[i] >> 6;
+                        const bitFlag: u8 = buffer[i] & 0b11000000;
                         const data: u8 = buffer[i] & 0b00111111;
                         switch (bitFlag) {
                             QOI_OP_INDEX => {
@@ -313,7 +313,7 @@ const FileEncoder = struct {
                         prevPixel[1] == imageData[i + 1] and
                         prevPixel[2] == imageData[i + 2])
                     {
-                        if (runLength == 62) {
+                        if (runLength == 62 or i + 1 == imageData.len) {
                             encodeData[currentEncodedByte] = runLength | QOI_OP_RUN;
                             currentEncodedByte += 1;
                             runLength = 0;
@@ -340,21 +340,25 @@ const FileEncoder = struct {
                                 continue;
                             }
                         }
+
+                        const rDiff: i16 = @as(i16, @intCast(imageData[i])) - @as(i16, @intCast(prevPixel[0]));
+                        const gDiff: i16 = @as(i16, @intCast(imageData[i + 1])) - @as(i16, @intCast(prevPixel[1]));
+                        const bDiff: i16 = @as(i16, @intCast(imageData[i + 2])) - @as(i16, @intCast(prevPixel[2]));
                         //QOI_OP_DIFF
-                        const rDifference: i16 = @as(i16, @intCast(imageData[i])) - @as(i16, @intCast(prevPixel[0]));
-                        const gDifference: i16 = @as(i16, @intCast(imageData[i + 1])) - @as(i16, @intCast(prevPixel[1]));
-                        const bDifference: i16 = @as(i16, @intCast(imageData[i + 2])) - @as(i16, @intCast(prevPixel[2]));
+                        {
+                            rDiff = calculateDiff(rDiff);
+                            gDiff = calculateDiff(gDiff);
+                            bDiff = calculateDiff(bDiff);
 
-                        const rDiff: u8 = 4;
-                        const gDiff: u8 = 4;
-                        const bDiff: u8 = 4;
-
-                        if (-2 <= rDifference and rDifference <= 1) {
-                            rDiff = @intCast(rDifference + 2);
-                        } else if (rDiff == -255) {
-                            rDiff = 3;
-                        } else if (254 <= rDiff and rDiff <= 255) {
-                            rDiff = @intCast(rDifference - 254);
+                            if (0 <= rDiff and rDiff <= 3 and
+                                0 <= gDiff and gDiff <= 3 and
+                                0 <= bDiff and bDiff <= 3)
+                            {
+                                encodeData[currentEncodedByte] = QOI_OP_DIFF | (@as(u8, @intCast(rDiff)) << 4) | (@as(u8, @intCast(gDiff)) << 2) | @as(u8, @intCast(bDiff));
+                                currentEncodedByte += 1;
+                                lastInstruction = QOI_OP_INSTRUCTIONS.QOI_OP_DIFF;
+                                continue;
+                            }
                         }
 
                         //QOI_OP_LUMA
@@ -390,6 +394,18 @@ const FileEncoder = struct {
         }
 
         return encodeData;
+    }
+
+    inline fn calculateDiff(diff: i16) i16 {
+        if (-2 <= diff and diff <= 1) {
+            return diff + 2;
+        } else if (diff == -255) {
+            return 3;
+        } else if (254 <= diff) {
+            return diff - 254;
+        }
+
+        return diff;
     }
 };
 
