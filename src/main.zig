@@ -263,7 +263,7 @@ pub const FileDecoder = struct {
     }
 };
 
-const FileEncoder = struct {
+pub const FileEncoder = struct {
     pub fn writeImageTofile(fileName: []u8, imageData: []u8, width: u32, height: u32, datasChannels: Channels, colorspace: Colorspace, allocator: std.mem.Allocator) void {
         const encodingData: []u8 = try encode(imageData, width, height, datasChannels, colorspace, allocator);
         defer allocator.free(encodingData);
