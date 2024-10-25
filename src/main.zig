@@ -5,18 +5,9 @@ pub const Channels = enum {
     RGBA,
 };
 
-const Colorspace = enum {
+pub const Colorspace = enum {
     sRGB, //sRGB with linear alpha
     LINEAR, //all channels linear
-};
-
-const QOI_OP_INSTRUCTIONS = enum {
-    QOI_OP_RGB,
-    QOI_OP_RGBA,
-    QOI_OP_INDEX,
-    QOI_OP_DIFF,
-    QOI_OP_LUMA,
-    QOI_OP_RUN,
 };
 
 // flags
@@ -28,21 +19,12 @@ const QOI_OP_LUMA: u8 = 0b10000000;
 const QOI_OP_RUN: u8 = 0b11000000;
 
 const QOI_END_MARKER: [8]u8 = [_]u8{0} ** 8;
-
-pub const qoi_header = struct {
-    magic: u8[4], // magic bytes "qoif"
-    width: u32, // image width in pixels (BE)
-    height: u32, // image height in pixels (BE)
-    channels: u8, // 3 = RGB, 4 = RGBA
-    colorspace: u8, // 0 = sRGB with linear alpha // 1 = all channels linear
-};
-
 // (1 + 3) = tag + rgb
 const QOI_OP_RGB_SIZE: u8 = 1 + 3;
 // (1 + 4) = tag + rgba
 const QOI_OP_RGBA_SIZE: u8 = 1 + 4;
-const QOI_HEADER_SIZE = @sizeOf(qoi_header);
-const QOI_END_MARKER_SIZE = @sizeOf(QOI_END_MARKER);
+const QOI_HEADER_SIZE = 14;
+const QOI_END_MARKER_SIZE = QOI_END_MARKER.len;
 
 pub const Header = struct {
     width: u32,
@@ -114,6 +96,10 @@ pub const FileDecoder = struct {
         var i: u64 = 0;
 
         while (i < buffer.len) {
+            if (currentPixel >= imageData.len) {
+                return error.PixelCountOverflow;
+            }
+
             if (runLength > 0) {
                 imageData[currentPixel] = prevPixel;
 
@@ -254,6 +240,10 @@ pub const FileDecoder = struct {
 
         //Using up the remaining run length
         while (runLength > 0) {
+            if (currentPixel >= imageData.len) {
+                return error.PixelCountOverflow;
+            }
+
             imageData[currentPixel] = prevPixel;
             currentPixel += 1;
             runLength -= 1;
@@ -264,7 +254,7 @@ pub const FileDecoder = struct {
 };
 
 pub const FileEncoder = struct {
-    pub fn writeImageTofile(fileName: []u8, imageData: []u8, width: u32, height: u32, datasChannels: Channels, colorspace: Colorspace, allocator: std.mem.Allocator) void {
+    pub fn writeImageTofile(fileName: []const u8, imageData: []u8, width: u32, height: u32, datasChannels: Channels, colorspace: Colorspace, allocator: std.mem.Allocator) !void {
         const encodingData: []u8 = try encode(imageData, width, height, datasChannels, colorspace, allocator);
         defer allocator.free(encodingData);
 
@@ -277,34 +267,29 @@ pub const FileEncoder = struct {
     pub fn encode(imageData: []u8, width: u32, height: u32, datasChannels: Channels, colorspace: Colorspace, allocator: std.mem.Allocator) ![]u8 {
         //worst case
         var encodeData: []u8 = switch (datasChannels) {
-            .RGB => try allocator.alloc([]u8, width * height * QOI_OP_RGB_SIZE + QOI_HEADER_SIZE + QOI_END_MARKER),
-            .RGBA => try allocator.alloc([]u8, width * height * QOI_OP_RGBA_SIZE + QOI_HEADER_SIZE + QOI_END_MARKER),
+            .RGB => try allocator.alloc(u8, @as(u64, @intCast(width)) * @as(u64, @intCast(height)) * @as(u64, @intCast(QOI_OP_RGB_SIZE)) + QOI_HEADER_SIZE + QOI_END_MARKER_SIZE),
+            .RGBA => try allocator.alloc(u8, @as(u64, @intCast(width)) * @as(u64, @intCast(height)) * @as(u64, @intCast(QOI_OP_RGBA_SIZE)) + QOI_HEADER_SIZE + QOI_END_MARKER_SIZE),
         };
 
         errdefer allocator.free(encodeData);
 
-        var currentEncodedByte: u64 = 0;
-        {
-            {
-                //QOI HEARDER
-                const header: [14]u8 = std.mem.toBytes(qoi_header{
-                    .magic = "qoif",
-                    .width = @byteSwap(width),
-                    .height = @byteSwap(height),
-                    .channels = switch (datasChannels) {
-                        .RGB => 3,
-                        .RGBA => 4,
-                    },
-                    .colorspace = switch (colorspace) {
-                        .sRGB => 0,
-                        .LINEAR => 1,
-                    },
-                });
+        var currentEncodedByte: u64 = 14;
 
-                for (0..header.len) |i| {
-                    encodeData[i] = header[i];
-                }
-            }
+        {
+            //QOI HEARDER
+            std.mem.copyForwards(u8, encodeData[0..4], "qoif");
+            std.mem.copyForwards(u8, encodeData[4..8], &std.mem.toBytes(@byteSwap(width)));
+            std.mem.copyForwards(u8, encodeData[8..12], &std.mem.toBytes(@byteSwap(height)));
+
+            encodeData[12] = switch (datasChannels) {
+                .RGB => 3,
+                .RGBA => 4,
+            };
+
+            encodeData[13] = switch (colorspace) {
+                .sRGB => 0,
+                .LINEAR => 1,
+            };
 
             const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
             defer allocator.free(runningArray);
@@ -329,8 +314,9 @@ pub const FileEncoder = struct {
             var runLength: u8 = 0;
 
             var i: u64 = 0;
-            while (i < imageData.len) : (i += if (datasChannels == Channels.RGB) 3 else 4) {
-                if (datasChannels == Channels.RGBA and prevPixel[3] == imageData[i + 3] or datasChannels == Channels.RGB) {
+            const addAmmount: u8 = if (datasChannels == Channels.RGB) 3 else 4;
+            while (i < imageData.len) : (i += addAmmount) {
+                if (datasChannels == Channels.RGB or datasChannels == Channels.RGBA and prevPixel[3] == imageData[i + 3]) {
                     if (prevPixel[0] == imageData[i] and
                         prevPixel[1] == imageData[i + 1] and
                         prevPixel[2] == imageData[i + 2])
@@ -346,9 +332,10 @@ pub const FileEncoder = struct {
                         }
                     } else {
                         if (run) {
-                            encodeData[i] = QOI_OP_RUN | runLength;
+                            encodeData[currentEncodedByte] = QOI_OP_RUN | runLength;
                             currentEncodedByte += 1;
                             runLength = 0;
+                            run = false;
                         }
 
                         //QOI_OP_INDEX
@@ -358,10 +345,15 @@ pub const FileEncoder = struct {
                                 currentRunningArray[1] == imageData[i + 1] and
                                 currentRunningArray[2] == imageData[i + 2])
                             {
-                                encodeData[currentEncodedByte] = QOI_OP_INDEX | getIndex(.{ imageData[i], imageData[i + 1], imageData[i + 2], prevPixel[3] });
+                                encodeData[currentEncodedByte] = getIndex(.{
+                                    imageData[i],
+                                    imageData[i + 1],
+                                    imageData[i + 2],
+                                    prevPixel[3],
+                                });
+
                                 currentEncodedByte += 1;
 
-                                runningArray[getIndex(.{ imageData[i], imageData[i + 1], imageData[i + 2], prevPixel[3] })] = .{ imageData[i], imageData[i + 1], imageData[i + 2], prevPixel[3] };
                                 prevPixel[0] = imageData[i];
                                 prevPixel[1] = imageData[i + 1];
                                 prevPixel[2] = imageData[i + 2];
@@ -407,10 +399,10 @@ pub const FileEncoder = struct {
                             const bG: i16 = calculateDiff(bDiff - gDiff, -8, 7);
 
                             if (0 <= rG and rG <= 15 and
-                                0 <= gG and gG <= 33 and
+                                0 <= gG and gG <= 63 and
                                 0 <= bG and bG <= 15)
                             {
-                                encodeData[currentEncodedByte] = QOI_OP_DIFF | bG;
+                                encodeData[currentEncodedByte] = QOI_OP_LUMA | @as(u8, @intCast(gG));
                                 currentEncodedByte += 1;
                                 encodeData[currentEncodedByte] = (@as(u8, @intCast(rG)) << 4) | @as(u8, @intCast(bG));
                                 currentEncodedByte += 1;
@@ -452,6 +444,13 @@ pub const FileEncoder = struct {
                         continue;
                     }
                 } else {
+                    if (run) {
+                        encodeData[currentEncodedByte] = QOI_OP_RUN | runLength;
+                        currentEncodedByte += 1;
+                        runLength = 0;
+                        run = false;
+                    }
+
                     //QOI_OP_RGBA
                     encodeData[currentEncodedByte] = QOI_OP_RGBA;
                     currentEncodedByte += 1;
@@ -479,10 +478,9 @@ pub const FileEncoder = struct {
                 }
             }
 
-            if (runLength > 0) {
+            if (run) {
                 encodeData[currentEncodedByte] = QOI_OP_RUN | runLength;
                 currentEncodedByte += 1;
-                runLength = 0;
             }
         }
 
@@ -491,7 +489,7 @@ pub const FileEncoder = struct {
             currentEncodedByte += 1;
         }
 
-        if (currentEncodedByte != encodeData.len) {
+        if (currentEncodedByte < encodeData.len) {
             const shortened = try allocator.alloc(u8, currentEncodedByte);
             for (0..currentEncodedByte) |i| {
                 shortened[i] = encodeData[i];
@@ -507,13 +505,13 @@ pub const FileEncoder = struct {
     inline fn calculateDiff(diff: i16, minDiff: i16, maxDiff: i16) i16 {
         if (minDiff <= diff and diff <= maxDiff) {
             return diff + @abs(minDiff);
-        } else if (-256 + maxDiff >= diff) {
-            return diff + (-256 + maxDiff);
-        } else if (256 - minDiff <= diff) {
-            return diff - (256 - minDiff);
+        } else if (diff - 254 <= maxDiff and 255 <= diff) {
+            return diff - 254 + @abs(minDiff);
+        } else if (diff + 254 >= minDiff and diff <= -255) {
+            return diff + 254 + @abs(minDiff);
         }
 
-        return diff;
+        return -1;
     }
 };
 
