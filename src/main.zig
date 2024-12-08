@@ -232,7 +232,7 @@ pub const FileDecoder = struct {
                                 runLength = data + 1;
                                 i += 1;
                             },
-                            else => error.Unreachable,
+                            else => return error.Unreachable,
                         }
                     },
                 }
