@@ -60,7 +60,7 @@ pub const FileDecoder = struct {
             .allocator = allocator,
         };
 
-        fileDecoder.imageBinData = try decode(buffer[QOI_HEADER_SIZE .. buffer.len - QOI_END_MARKER], fileDecoder.header.width, fileDecoder.header.height, allocator);
+        fileDecoder.imageBinData = try decode(buffer[QOI_HEADER_SIZE .. buffer.len - QOI_END_MARKER_SIZE], fileDecoder.header.width, fileDecoder.header.height, allocator);
 
         return fileDecoder;
     }
