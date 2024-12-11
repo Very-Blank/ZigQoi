@@ -483,7 +483,7 @@ pub const FileEncoder = struct {
             }
         }
 
-        for (0..QOI_END_MARKER_SIZE) |i| {
+        for (0..QOI_END_MARKER.len) |i| {
             encodeData[currentEncodedByte] = QOI_END_MARKER[i];
             currentEncodedByte += 1;
         }
