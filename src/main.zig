@@ -24,7 +24,6 @@ const QOI_OP_RGB_SIZE: u8 = 1 + 3;
 // (1 + 4) = tag + rgba
 const QOI_OP_RGBA_SIZE: u8 = 1 + 4;
 const QOI_HEADER_SIZE = 14;
-const QOI_END_MARKER_SIZE = QOI_END_MARKER.len;
 
 pub const Header = struct {
     width: u32,
@@ -60,7 +59,7 @@ pub const FileDecoder = struct {
             .allocator = allocator,
         };
 
-        fileDecoder.imageBinData = try decode(buffer[QOI_HEADER_SIZE .. buffer.len - QOI_END_MARKER_SIZE], fileDecoder.header.width, fileDecoder.header.height, allocator);
+        fileDecoder.imageBinData = try decode(buffer[QOI_HEADER_SIZE .. buffer.len - QOI_END_MARKER.len], fileDecoder.header.width, fileDecoder.header.height, allocator);
 
         return fileDecoder;
     }
@@ -73,7 +72,6 @@ pub const FileDecoder = struct {
         const imageData: [][4]u8 = try allocator.alloc([4]u8, width * height);
         errdefer allocator.free(imageData);
         const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
-        defer allocator.free(imageData);
 
         for (0..runningArray.len) |i| {
             runningArray[i] = .{
@@ -268,8 +266,8 @@ pub const FileEncoder = struct {
     pub fn encode(imageData: []u8, width: u32, height: u32, datasChannels: Channels, colorspace: Colorspace, allocator: std.mem.Allocator) ![]u8 {
         //worst case
         var encodeData: []u8 = switch (datasChannels) {
-            .RGB => try allocator.alloc(u8, @as(u64, @intCast(width)) * @as(u64, @intCast(height)) * @as(u64, @intCast(QOI_OP_RGB_SIZE)) + QOI_HEADER_SIZE + QOI_END_MARKER_SIZE),
-            .RGBA => try allocator.alloc(u8, @as(u64, @intCast(width)) * @as(u64, @intCast(height)) * @as(u64, @intCast(QOI_OP_RGBA_SIZE)) + QOI_HEADER_SIZE + QOI_END_MARKER_SIZE),
+            .RGB => try allocator.alloc(u8, @as(u64, @intCast(width)) * @as(u64, @intCast(height)) * @as(u64, @intCast(QOI_OP_RGB_SIZE)) + QOI_HEADER_SIZE + QOI_END_MARKER.len),
+            .RGBA => try allocator.alloc(u8, @as(u64, @intCast(width)) * @as(u64, @intCast(height)) * @as(u64, @intCast(QOI_OP_RGBA_SIZE)) + QOI_HEADER_SIZE + QOI_END_MARKER.len),
         };
 
         errdefer allocator.free(encodeData);
