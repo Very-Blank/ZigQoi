@@ -78,7 +78,7 @@ pub const FileDecoder = struct {
                 0,
                 0,
                 0,
-                255,
+                0,
             };
         }
 
