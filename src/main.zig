@@ -72,6 +72,7 @@ pub const FileDecoder = struct {
         const imageData: [][4]u8 = try allocator.alloc([4]u8, width * height);
         errdefer allocator.free(imageData);
         const runningArray: [][4]u8 = try allocator.alloc([4]u8, 64);
+        defer allocator.free(runningArray);
 
         for (0..runningArray.len) |i| {
             runningArray[i] = .{
