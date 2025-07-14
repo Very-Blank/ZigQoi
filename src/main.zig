@@ -102,6 +102,7 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
     const imageData: [][4]u8 = try allocator.alloc([4]u8, header.width * header.height);
     const imageBytes = buffer["qoif".len + Header.size() .. buffer.len - END_MARKER.len];
 
+    // Move this to a struct
     var runningArray: [64][4]u8 = [_][4]u8{[4]u8{ 0, 0, 0, 0 }} ** 64;
     var previousPixel: [4]u8 = .{
         0,
@@ -114,6 +115,7 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
     var currentPixel: u64 = 0;
 
     var runLength: u8 = 0;
+    // end
 
     state: switch (DecoderStatesType.fullFlag) {
         .runFlag => {
