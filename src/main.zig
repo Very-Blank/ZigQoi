@@ -10,16 +10,10 @@ pub const ColorSpaceType = enum(u8) {
     linear = 1, //all channels linear
 };
 
-const ColorType = enum(u64) {
-    r = 0,
-    g = 1,
-    b = 2,
-    a = 3,
-
-    pub inline fn index(@"enum": ColorType) u64 {
-        return @intFromEnum(@"enum");
-    }
-};
+const RED_OFFSET = 0;
+const GREEN_OFFSET = 1;
+const BLUE_OFFSET = 2;
+const ALPHA_OFFSET = 3;
 
 pub const Header = struct {
     width: u32,
@@ -72,12 +66,43 @@ const @"2BitFlagType" = enum(u2) {
     }
 };
 
+const Luma = struct {
+    const RED_MIN_ABS = 8;
+    const GREEN_MIN_ABS = 32;
+    const BLUE_MIN_ABS = 8;
+};
+
 const END_MARKER = ([_]u8{0} ** 7) ++ [_]u8{1};
 
 const DecoderStatesType = enum {
     fullFlag,
     smallFlag,
     runFlag,
+};
+
+const Coder = struct {
+    runningArray: [64][4]u8,
+    previousPixel: [4]u8,
+    index: u64,
+    currentPixel: u64,
+    runLength: u8,
+
+    inline fn nextPixel(self: *Coder) void {
+        self.currentPixel += 1;
+    }
+
+    const init: Coder = Coder{
+        .runningArray = [_][4]u8{[4]u8{ 0, 0, 0, 0 }} ** 64,
+        .previousPixel = .{
+            0,
+            0,
+            0,
+            255,
+        },
+        .index = 0,
+        .currentPixel = 0,
+        .runLength = 0,
+    };
 };
 
 pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, Header } {
@@ -102,94 +127,81 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
     const imageData: [][4]u8 = try allocator.alloc([4]u8, header.width * header.height);
     const imageBytes = buffer["qoif".len + Header.size() .. buffer.len - END_MARKER.len];
 
-    // Move this to a struct
-    var runningArray: [64][4]u8 = [_][4]u8{[4]u8{ 0, 0, 0, 0 }} ** 64;
-    var previousPixel: [4]u8 = .{
-        0,
-        0,
-        0,
-        255,
-    };
-
-    var i: u64 = 0;
-    var currentPixel: u64 = 0;
-
-    var runLength: u8 = 0;
-    // end
+    var coder: Coder = .init;
 
     state: switch (DecoderStatesType.fullFlag) {
         .runFlag => {
-            imageData[currentPixel] = previousPixel;
+            imageData[coder.currentPixel] = coder.previousPixel;
 
-            currentPixel += 1;
-            runLength -= 1;
+            coder.nextPixel();
+            coder.runLength -= 1;
 
-            if (0 < runLength) continue :state .runFlag;
-            if (i < imageBytes.len and currentPixel < imageData.len) continue :state .fullFlag;
+            if (coder.runLength > 0 and coder.currentPixel < imageData.len) continue :state .runFlag;
+            if (coder.index < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
             break :state;
         },
         .fullFlag => {
-            switch (imageBytes[i]) {
+            switch (imageBytes[coder.index]) {
                 @intFromEnum(@"8BitFlagType".rgb) => {
-                    if (imageBytes.len < i + @"8BitFlagType".rgb.fullSize()) return error.DataMissing;
-                    i += @"8BitFlagType".flagSize();
+                    if (imageBytes.len < coder.index + @"8BitFlagType".rgb.fullSize()) return error.DataMissing;
+                    coder.index += @"8BitFlagType".flagSize();
 
-                    imageData[currentPixel] = .{
-                        imageBytes[i + ColorType.r.index()],
-                        imageBytes[i + ColorType.g.index()],
-                        imageBytes[i + ColorType.b.index()],
-                        previousPixel[ColorType.a.index()],
+                    imageData[coder.currentPixel] = .{
+                        imageBytes[coder.index + RED_OFFSET],
+                        imageBytes[coder.index + GREEN_OFFSET],
+                        imageBytes[coder.index + BLUE_OFFSET],
+                        coder.previousPixel[ALPHA_OFFSET],
                     };
 
-                    previousPixel = imageData[currentPixel];
-                    runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
+                    coder.previousPixel = imageData[coder.currentPixel];
+                    coder.runningArray[getIndex(imageData[coder.currentPixel])] = imageData[coder.currentPixel];
 
-                    currentPixel += 1;
-                    i += @"8BitFlagType".rgb.fullSize() - @"8BitFlagType".flagSize();
+                    coder.nextPixel();
+                    coder.index += @"8BitFlagType".rgb.fullSize() - @"8BitFlagType".flagSize();
 
-                    if (i < imageBytes.len and currentPixel < imageData.len) continue :state .fullFlag;
+                    if (coder.index < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
                     break :state;
                 },
                 @intFromEnum(@"8BitFlagType".rgba) => {
-                    if (imageBytes.len < i + @"8BitFlagType".rgba.fullSize()) return error.DataMissing;
-                    i += @"8BitFlagType".flagSize();
+                    if (imageBytes.len < coder.index + @"8BitFlagType".rgba.fullSize()) return error.DataMissing;
+                    coder.index += @"8BitFlagType".flagSize();
 
-                    imageData[currentPixel] = .{
-                        imageBytes[i + ColorType.r.index()],
-                        imageBytes[i + ColorType.g.index()],
-                        imageBytes[i + ColorType.b.index()],
-                        imageBytes[i + ColorType.a.index()],
+                    imageData[coder.currentPixel] = .{
+                        imageBytes[coder.index + RED_OFFSET],
+                        imageBytes[coder.index + GREEN_OFFSET],
+                        imageBytes[coder.index + BLUE_OFFSET],
+                        imageBytes[coder.index + ALPHA_OFFSET],
                     };
 
-                    previousPixel = imageData[currentPixel];
-                    runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
+                    coder.previousPixel = imageData[coder.currentPixel];
+                    coder.runningArray[getIndex(imageData[coder.currentPixel])] = imageData[coder.currentPixel];
 
-                    currentPixel += 1;
-                    i += @"8BitFlagType".rgba.fullSize() - @"8BitFlagType".flagSize();
+                    coder.nextPixel();
+                    coder.index += @"8BitFlagType".rgba.fullSize() - @"8BitFlagType".flagSize();
 
-                    if (i < imageBytes.len and currentPixel < imageData.len) continue :state .fullFlag;
+                    if (coder.index < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
                     break :state;
                 },
                 else => continue :state .smallFlag,
             }
         },
         .smallFlag => {
-            const data: u8 = imageBytes[i] & 0b00111111;
-            switch (@as(u2, @intCast((imageBytes[i] & 0b11000000) >> 6))) {
+            const data: u8 = imageBytes[coder.index] & 0b00111111;
+            switch (@as(u2, @intCast((imageBytes[coder.index] & 0b11000000) >> 6))) {
                 @intFromEnum(@"2BitFlagType".index) => {
-                    imageData[currentPixel] = .{
-                        runningArray[data][ColorType.r.index()],
-                        runningArray[data][ColorType.g.index()],
-                        runningArray[data][ColorType.b.index()],
-                        runningArray[data][ColorType.a.index()],
+                    imageData[coder.currentPixel] = .{
+                        coder.runningArray[data][RED_OFFSET],
+                        coder.runningArray[data][GREEN_OFFSET],
+                        coder.runningArray[data][BLUE_OFFSET],
+                        coder.runningArray[data][ALPHA_OFFSET],
                     };
 
-                    previousPixel = imageData[currentPixel];
+                    coder.previousPixel = imageData[coder.currentPixel];
 
-                    currentPixel += 1;
-                    i += @"2BitFlagType".index.fullSize();
+                    coder.nextPixel();
+                    coder.index += @"2BitFlagType".index.fullSize();
 
-                    if (i < imageBytes.len and currentPixel < imageData.len) continue :state .fullFlag;
+                    if (coder.index < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
                     break :state;
                 },
                 @intFromEnum(@"2BitFlagType".diff) => {
@@ -198,89 +210,89 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
                     const bDiff: u8 = data & 0b000011;
 
                     if (rDiff < 3) {
-                        previousPixel[0] -%= 2 - 1 * rDiff;
+                        coder.previousPixel[RED_OFFSET] -%= 2 - rDiff;
                     } else {
-                        previousPixel[0] +%= 1;
+                        coder.previousPixel[RED_OFFSET] +%= 1;
                     }
 
                     if (gDiff < 3) {
-                        previousPixel[1] -%= 2 - 1 * gDiff;
+                        coder.previousPixel[GREEN_OFFSET] -%= 2 - gDiff;
                     } else {
-                        previousPixel[1] +%= 1;
+                        coder.previousPixel[GREEN_OFFSET] +%= 1;
                     }
 
                     if (bDiff < 3) {
-                        previousPixel[2] -%= 2 - 1 * bDiff;
+                        coder.previousPixel[BLUE_OFFSET] -%= 2 - bDiff;
                     } else {
-                        previousPixel[2] +%= 1;
+                        coder.previousPixel[BLUE_OFFSET] +%= 1;
                     }
 
-                    imageData[currentPixel] = previousPixel;
-                    runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
+                    imageData[coder.currentPixel] = coder.previousPixel;
+                    coder.runningArray[getIndex(imageData[coder.currentPixel])] = imageData[coder.currentPixel];
 
-                    currentPixel += 1;
-                    i += @"2BitFlagType".diff.fullSize();
+                    coder.nextPixel();
+                    coder.index += @"2BitFlagType".diff.fullSize();
 
-                    if (i < imageBytes.len and currentPixel < imageData.len) continue :state .fullFlag;
+                    if (coder.index < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
                     break :state;
                 },
                 @intFromEnum(@"2BitFlagType".luma) => {
-                    if (imageBytes.len < i + @"2BitFlagType".luma.fullSize()) return error.DataMissing;
-                    const rDiff: u8 = (imageBytes[i + 1] >> 4);
-                    const bDiff: u8 = (imageBytes[i + 1] & 0b00001111);
+                    if (imageBytes.len < coder.index + @"2BitFlagType".luma.fullSize()) return error.DataMissing;
+                    const rDiff: u8 = (imageBytes[coder.index + 1] >> 4);
+                    const bDiff: u8 = (imageBytes[coder.index + 1] & 0b00001111);
 
-                    if (rDiff <= 8) {
-                        previousPixel[ColorType.r.index()] -%= 8 - 1 * rDiff;
+                    if (rDiff <= Luma.RED_MIN_ABS) {
+                        coder.previousPixel[RED_OFFSET] -%= Luma.GREEN_MIN_ABS - rDiff;
 
-                        if (data <= 32) {
-                            previousPixel[ColorType.r.index()] -%= 32 - 1 * data;
+                        if (data <= Luma.GREEN_MIN_ABS) {
+                            coder.previousPixel[RED_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
                         } else {
-                            previousPixel[ColorType.r.index()] +%= data - 32;
+                            coder.previousPixel[RED_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
                         }
                     } else {
-                        previousPixel[ColorType.r.index()] +%= rDiff - 8;
+                        coder.previousPixel[RED_OFFSET] +%= rDiff - Luma.RED_MIN_ABS;
 
-                        if (data <= 32) {
-                            previousPixel[ColorType.r.index()] -%= 32 - 1 * data;
+                        if (data <= Luma.GREEN_MIN_ABS) {
+                            coder.previousPixel[RED_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
                         } else {
-                            previousPixel[ColorType.r.index()] +%= data - 32;
+                            coder.previousPixel[RED_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
                         }
                     }
 
-                    if (data <= 32) {
-                        previousPixel[ColorType.g.index()] -%= 32 - 1 * data;
+                    if (data <= Luma.GREEN_MIN_ABS) {
+                        coder.previousPixel[GREEN_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
                     } else {
-                        previousPixel[ColorType.g.index()] +%= data - 32;
+                        coder.previousPixel[GREEN_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
                     }
 
-                    if (bDiff <= 8) {
-                        previousPixel[ColorType.b.index()] -%= 8 - 1 * bDiff;
-                        if (data <= 32) {
-                            previousPixel[ColorType.b.index()] -%= 32 - 1 * data;
+                    if (bDiff <= Luma.BLUE_MIN_ABS) {
+                        coder.previousPixel[BLUE_OFFSET] -%= Luma.BLUE_MIN_ABS - bDiff;
+                        if (data <= Luma.GREEN_MIN_ABS) {
+                            coder.previousPixel[BLUE_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
                         } else {
-                            previousPixel[ColorType.b.index()] +%= data - 32;
+                            coder.previousPixel[BLUE_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
                         }
                     } else {
-                        previousPixel[ColorType.b.index()] +%= bDiff - 8;
-                        if (data <= 32) {
-                            previousPixel[ColorType.b.index()] -%= 32 - 1 * data;
+                        coder.previousPixel[BLUE_OFFSET] +%= bDiff - Luma.BLUE_MIN_ABS;
+                        if (data <= Luma.GREEN_MIN_ABS) {
+                            coder.previousPixel[BLUE_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
                         } else {
-                            previousPixel[ColorType.b.index()] +%= data - 32;
+                            coder.previousPixel[BLUE_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
                         }
                     }
 
-                    imageData[currentPixel] = previousPixel;
-                    runningArray[getIndex(imageData[currentPixel])] = imageData[currentPixel];
+                    imageData[coder.currentPixel] = coder.previousPixel;
+                    coder.runningArray[getIndex(imageData[coder.currentPixel])] = imageData[coder.currentPixel];
 
-                    currentPixel += 1;
-                    i += @"2BitFlagType".luma.fullSize();
+                    coder.nextPixel();
+                    coder.i += @"2BitFlagType".luma.fullSize();
 
-                    if (i < imageBytes.len and currentPixel < imageData.len) continue :state .fullFlag;
+                    if (coder.i < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
                     break :state;
                 },
                 @intFromEnum(@"2BitFlagType".run) => {
-                    runLength = data + 1;
-                    i += @"2BitFlagType".run.fullSize();
+                    coder.runLength = data + 1;
+                    coder.i += @"2BitFlagType".run.fullSize();
 
                     continue :state .runFlag;
                 },
