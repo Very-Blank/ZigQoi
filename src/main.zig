@@ -87,10 +87,6 @@ const Coder = struct {
     currentPixel: u64,
     runLength: u8,
 
-    inline fn nextPixel(self: *Coder) void {
-        self.currentPixel += 1;
-    }
-
     const init: Coder = Coder{
         .runningArray = [_][4]u8{[4]u8{ 0, 0, 0, 0 }} ** 64,
         .previousPixel = .{
@@ -133,7 +129,7 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
         .runFlag => {
             imageData[coder.currentPixel] = coder.previousPixel;
 
-            coder.nextPixel();
+            coder.currentPixel += 1;
             coder.runLength -= 1;
 
             if (coder.runLength > 0 and coder.currentPixel < imageData.len) continue :state .runFlag;
@@ -156,7 +152,7 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
                     coder.previousPixel = imageData[coder.currentPixel];
                     coder.runningArray[getIndex(imageData[coder.currentPixel])] = imageData[coder.currentPixel];
 
-                    coder.nextPixel();
+                    coder.currentPixel += 1;
                     coder.index += @"8BitFlagType".rgb.fullSize() - @"8BitFlagType".flagSize();
 
                     if (coder.index < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
@@ -176,7 +172,7 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
                     coder.previousPixel = imageData[coder.currentPixel];
                     coder.runningArray[getIndex(imageData[coder.currentPixel])] = imageData[coder.currentPixel];
 
-                    coder.nextPixel();
+                    coder.currentPixel += 1;
                     coder.index += @"8BitFlagType".rgba.fullSize() - @"8BitFlagType".flagSize();
 
                     if (coder.index < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
@@ -198,7 +194,7 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
 
                     coder.previousPixel = imageData[coder.currentPixel];
 
-                    coder.nextPixel();
+                    coder.currentPixel += 1;
                     coder.index += @"2BitFlagType".index.fullSize();
 
                     if (coder.index < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
@@ -230,7 +226,7 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
                     imageData[coder.currentPixel] = coder.previousPixel;
                     coder.runningArray[getIndex(imageData[coder.currentPixel])] = imageData[coder.currentPixel];
 
-                    coder.nextPixel();
+                    coder.currentPixel += 1;
                     coder.index += @"2BitFlagType".diff.fullSize();
 
                     if (coder.index < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
@@ -243,48 +239,30 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
 
                     if (rDiff <= Luma.RED_MIN_ABS) {
                         coder.previousPixel[RED_OFFSET] -%= Luma.GREEN_MIN_ABS - rDiff;
-
-                        if (data <= Luma.GREEN_MIN_ABS) {
-                            coder.previousPixel[RED_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
-                        } else {
-                            coder.previousPixel[RED_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
-                        }
                     } else {
                         coder.previousPixel[RED_OFFSET] +%= rDiff - Luma.RED_MIN_ABS;
-
-                        if (data <= Luma.GREEN_MIN_ABS) {
-                            coder.previousPixel[RED_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
-                        } else {
-                            coder.previousPixel[RED_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
-                        }
                     }
 
                     if (data <= Luma.GREEN_MIN_ABS) {
+                        coder.previousPixel[RED_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
                         coder.previousPixel[GREEN_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
+                        coder.previousPixel[BLUE_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
                     } else {
+                        coder.previousPixel[RED_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
                         coder.previousPixel[GREEN_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
+                        coder.previousPixel[BLUE_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
                     }
 
                     if (bDiff <= Luma.BLUE_MIN_ABS) {
                         coder.previousPixel[BLUE_OFFSET] -%= Luma.BLUE_MIN_ABS - bDiff;
-                        if (data <= Luma.GREEN_MIN_ABS) {
-                            coder.previousPixel[BLUE_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
-                        } else {
-                            coder.previousPixel[BLUE_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
-                        }
                     } else {
                         coder.previousPixel[BLUE_OFFSET] +%= bDiff - Luma.BLUE_MIN_ABS;
-                        if (data <= Luma.GREEN_MIN_ABS) {
-                            coder.previousPixel[BLUE_OFFSET] -%= Luma.GREEN_MIN_ABS - data;
-                        } else {
-                            coder.previousPixel[BLUE_OFFSET] +%= data - Luma.GREEN_MIN_ABS;
-                        }
                     }
 
                     imageData[coder.currentPixel] = coder.previousPixel;
                     coder.runningArray[getIndex(imageData[coder.currentPixel])] = imageData[coder.currentPixel];
 
-                    coder.nextPixel();
+                    coder.currentPixel += 1;
                     coder.i += @"2BitFlagType".luma.fullSize();
 
                     if (coder.i < imageBytes.len and coder.currentPixel < imageData.len) continue :state .fullFlag;
@@ -302,6 +280,8 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []u8, 
 
     return .{ @ptrCast(imageData), header };
 }
+
+// TODO: write the rest
 
 // pub const FileEncoder = struct {
 //     pub fn writeImageTofile(fileName: []const u8, imageData: []u8, width: u32, height: u32, datasChannels: Channels, colorspace: Colorspace, allocator: std.mem.Allocator) !void {
