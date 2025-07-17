@@ -18,9 +18,15 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    const testModule = b.createModule(.{
+        .root_source_file = b.path("src/test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Tests
     const lib_unit_tests = b.addTest(.{
-        .root_module = qoi,
+        .root_module = testModule,
     });
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
