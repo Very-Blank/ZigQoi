@@ -323,7 +323,7 @@ pub fn encode(imageData: []u8, header: Header, allocator: std.mem.Allocator) ![]
             {
                 if (coder.runLength > 0) {
                     buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".run)) << 6) | coder.runLength;
-                    coder.index = @"2BitFlagType".@"sizeOf(flag+data)"();
+                    coder.index += @"2BitFlagType".@"sizeOf(flag+data)"();
                 }
 
                 continue :state .index;
@@ -331,11 +331,13 @@ pub fn encode(imageData: []u8, header: Header, allocator: std.mem.Allocator) ![]
 
             if (coder.runLength == 62) {
                 buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".run)) << 6) | coder.runLength;
-                coder.index = @"2BitFlagType".@"sizeOf(flag+data)"();
+                coder.index = @"2BitFlagType".run.@"sizeOf(flag+data)"();
                 coder.runLength = 0;
             } else {
                 coder.runLength += 1;
             }
+
+            coder.currentPixel += 1;
 
             continue :state .run;
         },
@@ -354,13 +356,21 @@ pub fn encode(imageData: []u8, header: Header, allocator: std.mem.Allocator) ![]
                 runningArrayPixel[BLUE_OFFSET] == imageData[coder.index + BLUE_OFFSET] and
                 (header.channels == .rgb or (runningArrayPixel[ALPHA_OFFSET] == imageData[coder.currentPixel + ALPHA_OFFSET])))
             {
-                buffer[coder.index] = runningArrayPixel;
-                coder.index += 1;
+                buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".index)) << 6) | getIndex(.{
+                    imageData[coder.currentPixel + RED_OFFSET],
+                    imageData[coder.currentPixel + GREEN_OFFSET],
+                    imageData[coder.currentPixel + BLUE_OFFSET],
+                    if (header.channels == .rgb) coder.previousPixel[ALPHA_OFFSET] else imageData[coder.currentPixel + ALPHA_OFFSET],
+                });
+
+                coder.index += @"2BitFlagType".index.@"sizeOf(flag+data)"();
 
                 coder.previousPixel = imageData[coder.currentPixel + RED_OFFSET];
                 coder.previousPixel = imageData[coder.currentPixel + GREEN_OFFSET];
                 coder.previousPixel = imageData[coder.currentPixel + BLUE_OFFSET];
                 coder.previousPixel = imageData[coder.currentPixel + ALPHA_OFFSET];
+
+                coder.currentPixel += 1;
 
                 continue :state .run;
             }
@@ -370,215 +380,57 @@ pub fn encode(imageData: []u8, header: Header, allocator: std.mem.Allocator) ![]
             continue :state .diff;
         },
         .diff => {
-            //
-        },
-        .luma => {
-            //
-        },
-        .rgb => {
-            //
-        },
-        .rgba => {
-            //
-        },
-    }
-
-    while (i < imageData.len) : (i += addAmmount) {
-        if (datasChannels == Channels.RGB or datasChannels == Channels.RGBA and prevPixel[3] == imageData[i + 3]) {
-            if (prevPixel[0] == imageData[i] and
-                prevPixel[1] == imageData[i + 1] and
-                prevPixel[2] == imageData[i + 2])
+            const rDiff: i16 = @as(i16, @intCast(imageData[coder.currentPixel + RED_OFFSET])) - @as(i16, @intCast(coder.previousPixel[RED_OFFSET])) + Diff.MIN_DIFF_ABS;
+            const gDiff: i16 = @as(i16, @intCast(imageData[coder.currentPixel + GREEN_OFFSET])) - @as(i16, @intCast(coder.previousPixel[GREEN_OFFSET])) + Diff.MIN_DIFF_ABS;
+            const bDiff: i16 = @as(i16, @intCast(imageData[coder.currentPixel + BLUE_OFFSET])) - @as(i16, @intCast(coder.previousPixel[BLUE_OFFSET])) + Diff.MIN_DIFF_ABS;
+            if (0 <= rDiff and rDiff <= Diff.MAX_DIFF + Diff.MIN_DIFF_ABS and
+                0 <= gDiff and gDiff <= Diff.MAX_DIFF + Diff.MIN_DIFF_ABS and
+                0 <= bDiff and bDiff <= Diff.MAX_DIFF + Diff.MIN_DIFF_ABS)
             {
-                if (runLength == 62) {
-                    buffer[currentEncodedByte] = QOI_OP_RUN | runLength;
-                    currentEncodedByte += 1;
-                    runLength = 0;
-                } else if (run) {
-                    runLength += 1;
-                } else {
-                    run = true;
-                }
-            } else {
-                if (run) {
-                    buffer[currentEncodedByte] = QOI_OP_RUN | runLength;
-                    currentEncodedByte += 1;
-                    runLength = 0;
-                    run = false;
-                }
+                buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".diff)) << 6) | (@as(u8, @intCast(rDiff)) << 4) | (@as(u8, @intCast(gDiff)) << 2) | @as(u8, @intCast(bDiff));
 
-                //QOI_OP_INDEX
-                {
-                    const currentRunningArray = runningArray[getIndex(imageData[coder.currentPixel + RED_OFFSET], imageData[i + GREEN_OFFSET], imageData[i + BLUE_OFFSET], prevPixel[3])];
-                    if (currentRunningArray[0] == imageData[i] and
-                        currentRunningArray[1] == imageData[i + 1] and
-                        currentRunningArray[2] == imageData[i + 2])
-                    {
-                        buffer[currentEncodedByte] = getIndex(.{
-                            imageData[i],
-                            imageData[i + 1],
-                            imageData[i + 2],
-                            prevPixel[3],
-                        });
+                coder.index += @"2BitFlagType".diff.@"sizeOf(flag+data)"();
 
-                        currentEncodedByte += 1;
-
-                        prevPixel[0] = imageData[i];
-                        prevPixel[1] = imageData[i + 1];
-                        prevPixel[2] = imageData[i + 2];
-                        continue;
-                    }
-                }
-
-                //QOI_OP_DIFF
-                const rDiff: i16 = @as(i16, @intCast(imageData[i])) - @as(i16, @intCast(prevPixel[0]));
-                const gDiff: i16 = @as(i16, @intCast(imageData[i + 1])) - @as(i16, @intCast(prevPixel[1]));
-                const bDiff: i16 = @as(i16, @intCast(imageData[i + 2])) - @as(i16, @intCast(prevPixel[2]));
-
-                {
-                    const rDifference = calculateDiff(rDiff, -2, 1);
-                    const gDifference = calculateDiff(gDiff, -2, 1);
-                    const bDifference = calculateDiff(bDiff, -2, 1);
-
-                    if (0 <= rDifference and rDifference <= 3 and
-                        0 <= gDifference and gDifference <= 3 and
-                        0 <= bDifference and bDifference <= 3)
-                    {
-                        buffer[currentEncodedByte] = QOI_OP_DIFF | (@as(u8, @intCast(rDifference)) << 4) | (@as(u8, @intCast(gDifference)) << 2) | @as(u8, @intCast(bDifference));
-                        currentEncodedByte += 1;
-
-                        runningArray[getIndex(.{ imageData[i], imageData[i + 1], imageData[i + 2], prevPixel[3] })] = .{
-                            imageData[i],
-                            imageData[i + 1],
-                            imageData[i + 2],
-                            prevPixel[3],
-                        };
-
-                        prevPixel[0] = imageData[i];
-                        prevPixel[1] = imageData[i + 1];
-                        prevPixel[2] = imageData[i + 2];
-                        continue;
-                    }
-                }
-
-                //QOI_OP_LUMA
-                {
-                    const rG: i16 = calculateDiff(rDiff - gDiff, -8, 7);
-                    const gG: i16 = calculateDiff(gDiff, -32, 31);
-                    const bG: i16 = calculateDiff(bDiff - gDiff, -8, 7);
-
-                    if (0 <= rG and rG <= 15 and
-                        0 <= gG and gG <= 63 and
-                        0 <= bG and bG <= 15)
-                    {
-                        buffer[currentEncodedByte] = QOI_OP_LUMA | @as(u8, @intCast(gG));
-                        currentEncodedByte += 1;
-                        buffer[currentEncodedByte] = (@as(u8, @intCast(rG)) << 4) | @as(u8, @intCast(bG));
-                        currentEncodedByte += 1;
-
-                        runningArray[getIndex(.{ imageData[i], imageData[i + 1], imageData[i + 2], prevPixel[3] })] = .{
-                            imageData[i],
-                            imageData[i + 1],
-                            imageData[i + 2],
-                            prevPixel[3],
-                        };
-
-                        prevPixel[0] = imageData[i];
-                        prevPixel[1] = imageData[i + 1];
-                        prevPixel[2] = imageData[i + 2];
-                        continue;
-                    }
-                }
-
-                //QOI_OP_RGB
-                buffer[currentEncodedByte] = QOI_OP_RGB;
-                currentEncodedByte += 1;
-                buffer[currentEncodedByte] = imageData[i];
-                currentEncodedByte += 1;
-                buffer[currentEncodedByte] = imageData[i + 1];
-                currentEncodedByte += 1;
-                buffer[currentEncodedByte] = imageData[i + 2];
-                currentEncodedByte += 1;
-
-                runningArray[getIndex(.{ imageData[i], imageData[i + 1], imageData[i + 2], prevPixel[3] })] = .{
-                    imageData[i],
-                    imageData[i + 1],
-                    imageData[i + 2],
-                    prevPixel[3],
+                coder.runningArray[
+                    getIndex(.{
+                        imageData[coder.currentPixel + RED_OFFSET],
+                        imageData[coder.currentPixel + RED_OFFSET],
+                        imageData[coder.currentPixel + RED_OFFSET],
+                        coder.previousPixel[ALPHA_OFFSET],
+                    })
+                ] = .{
+                    imageData[coder.currentPixel + RED_OFFSET],
+                    imageData[coder.currentPixel + GREEN_OFFSET],
+                    imageData[coder.currentPixel + BLUE_OFFSET],
+                    coder.previousPixel[ALPHA_OFFSET],
                 };
 
-                prevPixel[0] = imageData[i];
-                prevPixel[1] = imageData[i + 1];
-                prevPixel[2] = imageData[i + 2];
-                continue;
-            }
-        } else {
-            if (run) {
-                buffer[currentEncodedByte] = QOI_OP_RUN | runLength;
-                currentEncodedByte += 1;
-                runLength = 0;
-                run = false;
+                coder.previousPixel = imageData[coder.currentPixel + RED_OFFSET];
+                coder.previousPixel = imageData[coder.currentPixel + GREEN_OFFSET];
+                coder.previousPixel = imageData[coder.currentPixel + BLUE_OFFSET];
+
+                coder.currentPixel += 1;
+
+                continue :state .run;
             }
 
-            //QOI_OP_RGBA
-            buffer[currentEncodedByte] = QOI_OP_RGBA;
-            currentEncodedByte += 1;
-            buffer[currentEncodedByte] = imageData[i];
-            currentEncodedByte += 1;
-            buffer[currentEncodedByte] = imageData[i + 1];
-            currentEncodedByte += 1;
-            buffer[currentEncodedByte] = imageData[i + 2];
-            currentEncodedByte += 1;
-            buffer[currentEncodedByte] = imageData[i + 3];
-            currentEncodedByte += 1;
-
-            runningArray[getIndex(.{ imageData[i], imageData[i + 1], imageData[i + 2], imageData[i + 3] })] = .{
-                imageData[i],
-                imageData[i + 1],
-                imageData[i + 2],
-                imageData[i + 3],
-            };
-
-            prevPixel[0] = imageData[i];
-            prevPixel[1] = imageData[i + 1];
-            prevPixel[2] = imageData[i + 2];
-            prevPixel[3] = imageData[i + 3];
-            continue;
-        }
-    }
-
-    if (run) {
-        buffer[currentEncodedByte] = QOI_OP_RUN | runLength;
-        currentEncodedByte += 1;
-    }
-
-    for (0..QOI_END_MARKER.len) |i| {
-        buffer[currentEncodedByte] = QOI_END_MARKER[i];
-        currentEncodedByte += 1;
-    }
-
-    if (currentEncodedByte < buffer.len) {
-        const shortened = try allocator.alloc(u8, currentEncodedByte);
-        for (0..currentEncodedByte) |i| {
-            shortened[i] = buffer[i];
-        }
-
-        allocator.free(buffer);
-        return shortened;
+            continue :state .luma;
+        },
+        .luma => {
+            const gDiff: i16 = @as(i16, @intCast(imageData[coder.currentPixel + GREEN_OFFSET])) - @as(i16, @intCast(coder.previousPixel[GREEN_OFFSET]));
+            const rDiff: i16 = @as(i16, @intCast(imageData[coder.currentPixel + RED_OFFSET])) - @as(i16, @intCast(coder.previousPixel[RED_OFFSET])) - gDiff;
+            const bDiff: i16 = @as(i16, @intCast(imageData[coder.currentPixel + BLUE_OFFSET])) - @as(i16, @intCast(coder.previousPixel[BLUE_OFFSET])) - gDiff;
+            continue :state .rgb;
+        },
+        .rgb => {
+            continue :state .run;
+        },
+        .rgba => {
+            continue :state .run;
+        },
     }
 
     return buffer;
-}
-
-inline fn calculateDiff(diff: i16, minDiff: i16, maxDiff: i16) i16 {
-    if (minDiff <= diff and diff <= maxDiff) {
-        return diff + @abs(minDiff);
-    } else if (diff - 254 <= maxDiff and 255 <= diff) {
-        return diff - 254 + @abs(minDiff);
-    } else if (diff + 254 >= minDiff and diff <= -255) {
-        return diff + 254 + @abs(minDiff);
-    }
-
-    return -1;
 }
 
 inline fn getIndex(red: u8, green: u8, blue: u8, alpha: u8) u8 {
