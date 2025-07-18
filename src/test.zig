@@ -5,9 +5,6 @@ test "Decoding" {
     const buffer = @embedFile("test.qoi");
     const expected = @embedFile("test.bin");
 
-    const num: u8 = @truncate(-2);
-    std.debug.print("{any}\n", .{num});
-
     const result: []qoi.Pixel, _ = try qoi.decode(buffer[0 .. buffer.len - 1], std.testing.allocator);
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualSlices(u8, expected, @ptrCast(result));
