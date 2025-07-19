@@ -11,7 +11,9 @@ pub const Pixel = packed struct {
 
     pub fn isEqual(pixel1: Pixel, pixel2: Pixel) bool {
         inline for (@typeInfo(Pixel).@"struct".fields) |field| {
-            if (@field(pixel1, field.name) != @field(pixel2, field.name)) return false;
+            if (@field(pixel1, field.name) != @field(pixel2, field.name)) {
+                return false;
+            }
         }
 
         return true;
@@ -37,8 +39,8 @@ pub const Body = packed struct {
     pub const MAGIC_NUMBER: [4]u8 = .{ 'q', 'o', 'i', 'f' };
     pub const END_MARKER: [8]u8 = ([_]u8{0} ** 7) ++ [_]u8{1};
 
-    pub inline fn @"sizeOf(header)"() u64 {
-        comptime var sum = 0;
+    pub inline fn sizeOfBody() u64 {
+        comptime var sum = MAGIC_NUMBER.len;
         inline for (@typeInfo(Body).@"struct".fields) |field| {
             sum += @sizeOf(field.type);
         }
@@ -123,7 +125,7 @@ const Coder = struct {
         .previousPixel = .init,
         .index = 0,
         .currentPixel = 0,
-        .runLength = 0,
+        .runLength = .zero,
     };
 };
 
@@ -153,7 +155,7 @@ pub fn decode(buffer: []const u8, allocator: std.mem.Allocator) !struct { []Pixe
     };
 
     const pixels: []Pixel = try allocator.alloc(Pixel, body.width * body.height);
-    const encodedBytes = buffer[Body.MAGIC_NUMBER.len + Body.@"sizeOf(header)"() .. buffer.len - Body.END_MARKER.len];
+    const encodedBytes = buffer[Body.sizeOfBody() .. buffer.len - Body.END_MARKER.len];
 
     var coder: Coder = .init;
 
@@ -318,18 +320,18 @@ const EncodeStateType = enum {
     rgba,
 };
 
-pub fn encode(pixels: []u8, body: Body, allocator: std.mem.Allocator) ![]u8 {
+pub fn encode(pixels: []const u8, body: Body, allocator: std.mem.Allocator) ![]u8 {
     var buffer: []u8 = try allocator.alloc(u8, @as(u64, @intCast(body.width)) * @as(u64, @intCast(body.height)) * @as(u64, @intCast(
         switch (body.channels) {
             .rgb => @"8BitFlagType".rgb.@"sizeOf(flag+data)"(),
             .rgba => @"8BitFlagType".rgba.@"sizeOf(flag+data)"(),
         },
-    )) + Body.@"sizeOf(header)"() + Body.END_MARKER.len);
+    )) + Body.sizeOfBody() + Body.END_MARKER.len);
 
     errdefer allocator.free(buffer);
 
     //QOI HEARDER
-    std.mem.copyForwards(u8, buffer[0..Body.MAGIC_NUMBER.len], Body.MAGIC_NUMBER);
+    std.mem.copyForwards(u8, buffer[0..Body.MAGIC_NUMBER.len], &Body.MAGIC_NUMBER);
     std.mem.copyForwards(u8, buffer[Body.MAGIC_NUMBER.len .. Body.MAGIC_NUMBER.len + @sizeOf(u32)], &std.mem.toBytes(@byteSwap(body.width)));
     std.mem.copyForwards(u8, buffer[Body.MAGIC_NUMBER.len + @sizeOf(u32) .. Body.MAGIC_NUMBER.len + @sizeOf(u32) * 2], &std.mem.toBytes(@byteSwap(body.height)));
 
@@ -337,32 +339,24 @@ pub fn encode(pixels: []u8, body: Body, allocator: std.mem.Allocator) ![]u8 {
     buffer[Body.MAGIC_NUMBER.len + @sizeOf(u32) * 2 + @sizeOf(Body.ChannelType)] = @intFromEnum(body.colorSpace);
 
     var coder: Coder = .init;
+    coder.index = Body.sizeOfBody();
+
     state: switch (EncodeStateType.run) {
         .bRun => {
-            coder.runningArray[
-                getIndex(Pixel{
-                    .red = pixels[coder.currentPixel + @offsetOf(Pixel, "red")],
-                    .green = pixels[coder.currentPixel + @offsetOf(Pixel, "green")],
-                    .blue = pixels[coder.currentPixel + @offsetOf(Pixel, "blue")],
-                    .alpha = coder.previousPixel.alpha,
-                })
-            ] = Pixel{
+            const currentPixel: Pixel = Pixel{
                 .red = pixels[coder.currentPixel + @offsetOf(Pixel, "red")],
                 .green = pixels[coder.currentPixel + @offsetOf(Pixel, "green")],
                 .blue = pixels[coder.currentPixel + @offsetOf(Pixel, "blue")],
-                .alpha = coder.previousPixel.alpha,
+                .alpha = if (body.channels == .rgb) coder.previousPixel.alpha else pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")],
             };
 
-            coder.previousPixel.red = pixels[coder.currentPixel + @offsetOf(Pixel, "red")];
-            coder.previousPixel.green = pixels[coder.currentPixel + @offsetOf(Pixel, "green")];
-            coder.previousPixel.blue = pixels[coder.currentPixel + @offsetOf(Pixel, "red")];
+            coder.runningArray[getIndex(currentPixel)] = currentPixel;
+            coder.previousPixel = currentPixel;
 
-            if (body.channels == .rgba) {
-                coder.previousPixel.blue = pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")];
-            }
+            coder.currentPixel += @intFromEnum(body.channels);
 
-            coder.currentPixel += 1;
-            continue :state .run;
+            if (coder.currentPixel < pixels.len) continue :state .run;
+            break :state;
         },
         .run => {
             if (coder.previousPixel.red != pixels[coder.currentPixel + @offsetOf(Pixel, "red")] or
@@ -371,60 +365,57 @@ pub fn encode(pixels: []u8, body: Body, allocator: std.mem.Allocator) ![]u8 {
                 (body.channels == .rgba and coder.previousPixel.alpha != pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")]))
             {
                 if (coder.runLength.len > 0) {
-                    buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".run)) << 6) | coder.runLength;
-                    coder.index += @"2BitFlagType".@"sizeOf(flag+data)"();
+                    buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".run)) << 6) | coder.runLength.len - 1;
+                    coder.index += @"2BitFlagType".run.@"sizeOf(flag+data)"();
+                    coder.runLength.len = 0;
                 }
 
-                continue :state .index;
+                if (coder.currentPixel < pixels.len) continue :state .index;
+                break :state;
             }
 
-            if (coder.runLength.len == Coder.RunLength.MAX_LENGTH) {
-                buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".run)) << 6) | coder.runLength;
-                coder.index = @"2BitFlagType".run.@"sizeOf(flag+data)"();
-                coder.runLength = 0;
+            if (coder.runLength.len >= Coder.RunLength.MAX_LENGTH) {
+                std.debug.assert(coder.runLength.len == Coder.RunLength.MAX_LENGTH);
+
+                buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".run)) << 6) | coder.runLength.len - 1;
+                coder.index += @"2BitFlagType".run.@"sizeOf(flag+data)"();
+                coder.runLength.len = 1;
             } else {
-                coder.runLength += 1;
+                coder.runLength.len += 1;
             }
 
-            coder.currentPixel += 1;
+            // FIXME: write the remaning run before exiting
+            coder.currentPixel += @intFromEnum(body.channels);
 
-            continue :state .run;
+            if (coder.currentPixel < pixels.len) {
+                continue :state .run;
+            } else if (coder.runLength.len > 0) {
+                buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".run)) << 6) | coder.runLength.len - 1;
+                coder.index += @"2BitFlagType".run.@"sizeOf(flag+data)"();
+                coder.runLength.len = 0;
+            }
+
+            break :state;
         },
         .index => {
-            const runningArrayPixel = coder.runningArray[
-                getIndex(Pixel{
-                    .red = pixels[coder.currentPixel + @offsetOf(Pixel, "red")],
-                    .blue = pixels[coder.currentPixel + @offsetOf(Pixel, "green")],
-                    .green = pixels[coder.currentPixel + @offsetOf(Pixel, "blue")],
-                    .alpha = if (body.channels == .rgb) coder.previousPixel.alpha else pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")],
-                })
-            ];
+            const currentPixel = Pixel{
+                .red = pixels[coder.currentPixel + @offsetOf(Pixel, "red")],
+                .green = pixels[coder.currentPixel + @offsetOf(Pixel, "green")],
+                .blue = pixels[coder.currentPixel + @offsetOf(Pixel, "blue")],
+                .alpha = if (body.channels == .rgb) coder.previousPixel.alpha else pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")],
+            };
 
-            if (runningArrayPixel.red == pixels[coder.index + @offsetOf(Pixel, "red")] and
-                runningArrayPixel.green == pixels[coder.index + @offsetOf(Pixel, "green")] and
-                runningArrayPixel.blue == pixels[coder.index + @offsetOf(Pixel, "blue")] and
-                (body.channels == .rgb or (runningArrayPixel.alpha == pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")])))
-            {
-                buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".index)) << 6) | getIndex(Pixel{
-                    .red = pixels[coder.currentPixel + @offsetOf(Pixel, "red")],
-                    .blue = pixels[coder.currentPixel + @offsetOf(Pixel, "green")],
-                    .green = pixels[coder.currentPixel + @offsetOf(Pixel, "blue")],
-                    .alpha = if (body.channels == .rgb) coder.previousPixel.alpha else pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")],
-                });
+            const runningArrayPixel = coder.runningArray[getIndex(currentPixel)];
 
+            if (Pixel.isEqual(currentPixel, runningArrayPixel)) {
+                buffer[coder.index] = (@as(u8, @intFromEnum(@"2BitFlagType".index)) << 6) | getIndex(currentPixel);
                 coder.index += @"2BitFlagType".index.@"sizeOf(flag+data)"();
 
-                coder.previousPixel.red = pixels[coder.currentPixel + @offsetOf(Pixel, "red")];
-                coder.previousPixel.green = pixels[coder.currentPixel + @offsetOf(Pixel, "green")];
-                coder.previousPixel.blue = pixels[coder.currentPixel + @offsetOf(Pixel, "blue")];
+                coder.previousPixel = currentPixel;
+                coder.currentPixel += @intFromEnum(body.channels);
 
-                if (body.channels == .rgba) {
-                    coder.previousPixel.blue = pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")];
-                }
-
-                coder.currentPixel += 1;
-
-                continue :state .run;
+                if (coder.currentPixel < pixels.len) continue :state .run;
+                break :state;
             }
 
             if (body.channels == .rgba and coder.previousPixel.alpha != pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")]) continue :state .rgba;
@@ -459,10 +450,9 @@ pub fn encode(pixels: []u8, body: Body, allocator: std.mem.Allocator) ![]u8 {
                 0 <= gLuma and gLuma <= Luma.GREEN_MIN_ABS + Luma.GREEN_MAX and
                 0 <= bLuma and bLuma <= Luma.BLUE_MIN_ABS + Luma.BLUE_MAX)
             {
-                buffer[coder.index] = (@as(u8, @intCast(@"2BitFlagType".luma)) << 6) | @as(u8, @intCast(gLuma));
-                coder.index += @sizeOf(u8);
-                buffer[coder.index] = (@as(u8, @intCast(rLuma)) << 4) | @as(u8, @intCast(gLuma));
-                coder.index += @sizeOf(u8);
+                buffer[coder.index] = (@as(u8, @intCast(@intFromEnum(@"2BitFlagType".luma))) << 6) | @as(u8, @intCast(gLuma));
+                buffer[coder.index + @sizeOf(u8)] = (@as(u8, @intCast(rLuma)) << 4) | @as(u8, @intCast(gLuma));
+                coder.index += @"2BitFlagType".luma.@"sizeOf(flag+data)"();
 
                 continue :state .bRun;
             }
@@ -470,12 +460,38 @@ pub fn encode(pixels: []u8, body: Body, allocator: std.mem.Allocator) ![]u8 {
             continue :state .rgb;
         },
         .rgb => {
-            continue :state .run;
+            buffer[coder.index] = @intFromEnum(@"8BitFlagType".rgb);
+            buffer[coder.index + @sizeOf(@"8BitFlagType") + @offsetOf(Pixel, "red")] = pixels[coder.currentPixel + @offsetOf(Pixel, "red")];
+            buffer[coder.index + @sizeOf(@"8BitFlagType") + @offsetOf(Pixel, "green")] = pixels[coder.currentPixel + @offsetOf(Pixel, "green")];
+            buffer[coder.index + @sizeOf(@"8BitFlagType") + @offsetOf(Pixel, "blue")] = pixels[coder.currentPixel + @offsetOf(Pixel, "blue")];
+            coder.index += @"8BitFlagType".rgb.@"sizeOf(flag+data)"();
+
+            continue :state .bRun;
         },
         .rgba => {
-            continue :state .run;
+            buffer[coder.index] = @intFromEnum(@"8BitFlagType".rgba);
+            buffer[coder.index + @sizeOf(@"8BitFlagType") + @offsetOf(Pixel, "red")] = pixels[coder.currentPixel + @offsetOf(Pixel, "red")];
+            buffer[coder.index + @sizeOf(@"8BitFlagType") + @offsetOf(Pixel, "green")] = pixels[coder.currentPixel + @offsetOf(Pixel, "green")];
+            buffer[coder.index + @sizeOf(@"8BitFlagType") + @offsetOf(Pixel, "blue")] = pixels[coder.currentPixel + @offsetOf(Pixel, "blue")];
+            buffer[coder.index + @sizeOf(@"8BitFlagType") + @offsetOf(Pixel, "alpha")] = pixels[coder.currentPixel + @offsetOf(Pixel, "alpha")];
+            coder.index += @"8BitFlagType".rgba.@"sizeOf(flag+data)"();
+
+            continue :state .bRun;
         },
     }
+
+    if (coder.index + Body.END_MARKER.len < buffer.len) {
+        const shortBuffer = try allocator.alloc(u8, coder.index + Body.END_MARKER.len);
+        @memcpy(shortBuffer[0..coder.index], buffer[0..coder.index]);
+        @memcpy(shortBuffer[coder.index .. coder.index + Body.END_MARKER.len], &Body.END_MARKER);
+        allocator.free(buffer);
+
+        return shortBuffer;
+    }
+
+    std.debug.assert(coder.index + Body.END_MARKER.len == buffer.len);
+
+    @memcpy(buffer[coder.index .. coder.index + Body.END_MARKER.len], &Body.END_MARKER);
 
     return buffer;
 }
