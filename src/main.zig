@@ -47,14 +47,14 @@ const @"8BitFlagType" = enum(u8) {
 
     pub inline fn @"sizeOf(flag+data)"(@"enum": @"8BitFlagType") u64 {
         switch (@"enum") {
-            .rgb => return @sizeOf(@"8BitFlagType") + @sizeOf([3]u8),
+            .rgb => return @sizeOf(@"8BitFlagType") + @sizeOf(struct { r: u8, g: u8, b: u8 }),
             .rgba => return @sizeOf(@"8BitFlagType") + @sizeOf(Pixel),
         }
     }
 
     pub inline fn sizeOfData(@"enum": @"8BitFlagType") u64 {
         return switch (@"enum") {
-            .rgb => @sizeOf([3]u8),
+            .rgb => @sizeOf(struct { r: u8, g: u8, b: u8 }),
             .rgba => @sizeOf(Pixel),
         };
     }
